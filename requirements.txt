@@ -1,0 +1,31 @@
+# Core Django
+Django==4.2.7
+django-environ==0.11.2
+psycopg2-binary==2.9.9
+dj-database-url==2.1.0
+whitenoise==6.6.0
+
+# REST API
+djangorestframework==3.14.0
+djangorestframework-simplejwt==5.3.0
+drf-yasg==1.21.7  # Optional: For API documentation
+django-filter==23.5
+
+# Security & CORS
+django-cors-headers==4.3.1
+python-dotenv==1.0.0
+
+# Email & SMS
+twilio==8.9.0  # Optional: For SMS verification
+celery==5.3.4  # Optional: For background tasks
+redis==5.0.1   # Optional: For caching and Celery
+
+# Development
+ipython==8.18.1
+autopep8==2.0.4
+pytest==7.4.3
+pytest-django==4.7.0
+pytest-cov==4.1.0
+coverage==7.4.0
+black==23.12.0
+flake8==6.1.0
