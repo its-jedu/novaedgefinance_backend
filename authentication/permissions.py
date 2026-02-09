@@ -22,7 +22,7 @@ class IsOwnerOrAdmin(BasePermission):
 
 class IsVerified(permissions.BasePermission):
     """
-    Allows access only to verified users.
+    Allows access only to phone verified users.
     """
     def has_permission(self, request, view):
         return bool(request.user and request.user.is_authenticated and request.user.is_verified)
@@ -33,3 +33,30 @@ class IsActive(permissions.BasePermission):
     """
     def has_permission(self, request, view):
         return bool(request.user and request.user.is_authenticated and request.user.is_active)
+
+class IsEmailVerified(permissions.BasePermission):
+    """
+    Allows access only to email verified users.
+    """
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated and request.user.email_verified)
+
+class IsProfileCompleted(permissions.BasePermission):
+    """
+    Allows access only to users with completed profiles.
+    """
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated and request.user.profile_completed)
+
+class CanMakeDeposits(permissions.BasePermission):
+    """
+    Allows access only to users who can make deposits.
+    Requires: email verified, phone verified, and profile completed.
+    """
+    def has_permission(self, request, view):
+        return bool(request.user and 
+                   request.user.is_authenticated and 
+                   request.user.email_verified and 
+                   request.user.is_verified and 
+                   request.user.profile_completed)
+    

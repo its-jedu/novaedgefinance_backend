@@ -1,6 +1,7 @@
 from django.db import models
 
 # Create your models here.
+from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.core.validators import RegexValidator
 from django.utils import timezone
@@ -22,6 +23,8 @@ class UserManager(BaseUserManager):
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
         extra_fields.setdefault('is_verified', True)
+        extra_fields.setdefault('email_verified', True)
+        extra_fields.setdefault('profile_completed', True)
         extra_fields.setdefault('role', 'ADMIN')
         extra_fields.setdefault('is_active', True)
         
@@ -51,7 +54,9 @@ class User(AbstractBaseUser, PermissionsMixin):
     country = models.CharField(max_length=50)
     
     # Status fields
-    is_verified = models.BooleanField(default=False)
+    is_verified = models.BooleanField(default=False)  # Phone verified
+    email_verified = models.BooleanField(default=False)  # Email verified
+    profile_completed = models.BooleanField(default=False)  # Profile completed
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     
@@ -61,14 +66,19 @@ class User(AbstractBaseUser, PermissionsMixin):
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    profile_completed_at = models.DateTimeField(null=True, blank=True)
     
     # Login attempts tracking
     failed_login_attempts = models.PositiveIntegerField(default=0)
     locked_until = models.DateTimeField(null=True, blank=True)
     
-    # Verification code
-    verification_code = models.CharField(max_length=6, null=True, blank=True)
-    verification_code_sent_at = models.DateTimeField(null=True, blank=True)
+    # Phone verification
+    phone_verification_code = models.CharField(max_length=6, null=True, blank=True)
+    phone_verification_sent_at = models.DateTimeField(null=True, blank=True)
+    
+    # Email verification
+    email_verification_token = models.CharField(max_length=64, null=True, blank=True)
+    email_verification_sent_at = models.DateTimeField(null=True, blank=True)
     
     objects = UserManager()
     
@@ -107,3 +117,104 @@ class User(AbstractBaseUser, PermissionsMixin):
     @property
     def is_admin(self):
         return self.role == self.Role.ADMIN
+    
+    @property
+    def is_fully_verified(self):
+        """Check if user has completed all verification steps"""
+        return self.is_verified and self.email_verified and self.profile_completed
+    
+    @property
+    def can_make_deposits(self):
+        """Check if user can make deposits (requires profile completion)"""
+        return self.profile_completed and self.email_verified and self.is_verified
+
+
+class InvestmentProfile(models.Model):
+    """
+    Investment profile for user profile completion
+    """
+    class EmploymentStatus(models.TextChoices):
+        EMPLOYED = 'EMPLOYED', 'Employed'
+        SELF_EMPLOYED = 'SELF_EMPLOYED', 'Self-employed'
+        UNEMPLOYED = 'UNEMPLOYED', 'Unemployed'
+        STUDENT = 'STUDENT', 'Student'
+        RETIRED = 'RETIRED', 'Retired'
+    
+    class RiskTolerance(models.TextChoices):
+        LOW = 'LOW', 'Low Risk'
+        MEDIUM = 'MEDIUM', 'Medium Risk'
+        HIGH = 'HIGH', 'High Risk'
+    
+    class InvestmentGoal(models.TextChoices):
+        SHORT_TERM = 'SHORT_TERM', 'Short-term Growth (1-3 years)'
+        MEDIUM_TERM = 'MEDIUM_TERM', 'Medium-term Growth (3-7 years)'
+        LONG_TERM = 'LONG_TERM', 'Long-term Growth (7+ years)'
+        RETIREMENT = 'RETIREMENT', 'Retirement Planning'
+        WEALTH_PRESERVATION = 'WEALTH_PRESERVATION', 'Wealth Preservation'
+    
+    class AnnualIncome(models.TextChoices):
+        UNDER_25K = 'UNDER_25K', 'Under $25,000'
+        _25K_50K = '25K_50K', '$25,000 - $50,000'
+        _50K_100K = '50K_100K', '$50,000 - $100,000'
+        _100K_250K = '100K_250K', '$100,000 - $250,000'
+        OVER_250K = 'OVER_250K', 'Over $250,000'
+    
+    # Foreign key to user
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='investment_profile')
+    
+    # Personal details
+    date_of_birth = models.DateField(null=True, blank=True)
+    address = models.CharField(max_length=255, null=True, blank=True)
+    city = models.CharField(max_length=100, null=True, blank=True)
+    postal_code = models.CharField(max_length=20, null=True, blank=True)
+    
+    # Financial information
+    annual_income = models.CharField(
+        max_length=20,
+        choices=AnnualIncome.choices,
+        null=True,
+        blank=True
+    )
+    employment_status = models.CharField(
+        max_length=20,
+        choices=EmploymentStatus.choices,
+        null=True,
+        blank=True
+    )
+    source_of_funds = models.CharField(max_length=255, null=True, blank=True)
+    
+    # Investment preferences
+    risk_tolerance = models.CharField(
+        max_length=10,
+        choices=RiskTolerance.choices,
+        null=True,
+        blank=True
+    )
+    investment_goal = models.CharField(
+        max_length=30,
+        choices=InvestmentGoal.choices,
+        null=True,
+        blank=True
+    )
+    investment_experience = models.TextField(null=True, blank=True)
+    
+    # Selected plan (will reference investment plans from another app)
+    selected_plan_id = models.IntegerField(null=True, blank=True)
+    selected_plan_name = models.CharField(max_length=100, null=True, blank=True)
+    
+    # Terms acceptance
+    accepted_terms = models.BooleanField(default=False)
+    accepted_privacy_policy = models.BooleanField(default=False)
+    accepted_risk_disclosure = models.BooleanField(default=False)
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = 'Investment Profile'
+        verbose_name_plural = 'Investment Profiles'
+    
+    def __str__(self):
+        return f"Investment Profile for {self.user.email}"
+    

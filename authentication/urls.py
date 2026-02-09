@@ -6,13 +6,16 @@ urlpatterns = [
     # Authentication endpoints
     path('register/', views.UserRegistrationView.as_view(), name='register'),
     path('verify-phone/', views.PhoneVerificationView.as_view(), name='verify-phone'),
+    path('verify-email/', views.EmailVerificationView.as_view(), name='verify-email'),
     path('login/', views.UserLoginView.as_view(), name='login'),
     path('logout/', views.LogoutView.as_view(), name='logout'),
     path('resend-verification/', views.ResendVerificationView.as_view(), name='resend-verification'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     
-    # User profile
+    # User profile and completion
     path('profile/', views.UserProfileView.as_view(), name='profile'),
+    path('profile/status/', views.ProfileStatusView.as_view(), name='profile-status'),
+    path('profile/complete/', views.CompleteProfileView.as_view(), name='complete-profile'),
     path('change-password/', views.ChangePasswordView.as_view(), name='change-password'),
     
     # Admin endpoints
