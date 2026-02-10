@@ -61,3 +61,4 @@ class CanManagePlans(BasePermission):
         
         # Check for specific permissions if using Django's permission system
         return request.user.has_perm('investments.manage_investment_plan')
+
