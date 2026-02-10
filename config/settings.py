@@ -59,6 +59,7 @@ INSTALLED_APPS = [
     
     # Local apps
     'authentication',
+    'wallet',
 ]
 
 MIDDLEWARE = [
