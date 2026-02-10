@@ -12,18 +12,13 @@ from decimal import Decimal
 import logging
 
 from authentication.permissions import IsProfileCompleted, CanMakeDeposits
-from .models import (
-    Wallet, Transaction, InvestmentPlan,
-    UserInvestment, Deposit
-)
+from .models import Wallet, Transaction, Deposit
 from .serializers import (
     WalletSerializer, TransactionSerializer,
-    InvestmentPlanSerializer, UserInvestmentSerializer,
-    CreateInvestmentSerializer, DepositSerializer,
-    CreateDepositSerializer, InvestmentGrowthDataSerializer,
+    DepositSerializer, CreateDepositSerializer,
     WalletOverviewSerializer
 )
-from .utils import NOWPaymentsClient, calculate_investment_growth, update_all_active_investments
+from .utils import NOWPaymentsClient
 from .permissions import IsOwnerOrAdmin, IsWalletOwnerOrAdmin, AdminOnly
 
 logger = logging.getLogger(__name__)
@@ -31,51 +26,29 @@ logger = logging.getLogger(__name__)
 
 class WalletOverviewView(APIView):
     """
-    Get wallet overview including balance, profits, and active investments
+    Get wallet overview including balance, profits, and recent transactions
     """
     permission_classes = [IsAuthenticated, IsProfileCompleted]
     
     def get(self, request):
         try:
-            # Update all active investments before fetching data
-            update_all_active_investments()
-            
             # Get or create wallet
             wallet, created = Wallet.objects.get_or_create(user=request.user)
-            
-            # Get active investments
-            active_investments = UserInvestment.objects.filter(
-                user=request.user,
-                status=UserInvestment.InvestmentStatus.ACTIVE
-            )
-            
-            # Calculate active investments total
-            active_investments_total = sum(
-                investment.current_value for investment in active_investments
-            )
             
             # Get recent transactions
             recent_transactions = Transaction.objects.filter(
                 wallet=wallet
             ).order_by('-created_at')[:10]
             
-            # Get recent investments
-            recent_investments = UserInvestment.objects.filter(
-                user=request.user
-            ).order_by('-created_at')[:5]
-            
             overview_data = {
                 'balance': wallet.balance_usd,
                 'total_deposits': wallet.total_deposited,
                 'total_investments': wallet.total_invested,
                 'total_profits': wallet.total_profit,
-                'active_investments_count': active_investments.count(),
-                'active_investments_total': active_investments_total,
-                'recent_transactions': recent_transactions,
-                'recent_investments': recent_investments
+                'recent_transactions': recent_transactions
             }
             
-            serializer = WalletOverviewSerializer(overview_data)
+            serializer = WalletOverviewSerializer(overview_data, context={'request': request})
             return Response(serializer.data, status=status.HTTP_200_OK)
             
         except Exception as e:
@@ -153,132 +126,6 @@ class CreateDepositView(APIView):
             )
 
 
-class InvestmentPlansView(generics.ListAPIView):
-    """
-    Get all active investment plans
-    """
-    permission_classes = [IsAuthenticated, IsProfileCompleted]
-    serializer_class = InvestmentPlanSerializer
-    queryset = InvestmentPlan.objects.filter(is_active=True).order_by('min_amount')
-
-
-class StartInvestmentView(APIView):
-    """
-    Start a new investment
-    """
-    permission_classes = [IsAuthenticated, IsProfileCompleted]
-    
-    def post(self, request):
-        serializer = CreateInvestmentSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        
-        plan = serializer.validated_data['plan']
-        amount = serializer.validated_data['amount']
-        
-        try:
-            with transaction.atomic():
-                # Get or create wallet
-                wallet, created = Wallet.objects.get_or_create(user=request.user)
-                
-                # Check if user has sufficient balance
-                if not wallet.can_invest(amount):
-                    return Response(
-                        {'error': 'Insufficient balance'},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-                
-                # Calculate end date
-                start_date = timezone.now()
-                end_date = start_date + timezone.timedelta(days=plan.duration_days)
-                
-                # Calculate expected total
-                expected_total = amount + plan.calculate_profit(amount)
-                
-                # Create investment
-                investment = UserInvestment.objects.create(
-                    user=request.user,
-                    plan=plan,
-                    principal_amount=amount,
-                    expected_total=expected_total,
-                    current_value=amount,
-                    start_date=start_date,
-                    end_date=end_date,
-                    last_compounded_at=start_date,
-                    status=UserInvestment.InvestmentStatus.ACTIVE
-                )
-                
-                # Debit amount from wallet
-                wallet.debit(amount, transaction_type='INVESTMENT')
-                
-                # Record transaction
-                Transaction.objects.create(
-                    wallet=wallet,
-                    transaction_type=Transaction.TransactionType.INVESTMENT,
-                    amount=amount,
-                    status=Transaction.TransactionStatus.COMPLETED,
-                    description=f"Investment in {plan.name} plan",
-                    reference=str(investment.investment_id),
-                    metadata={
-                        'plan_id': plan.id,
-                        'plan_name': plan.name,
-                        'duration_days': plan.duration_days
-                    }
-                )
-                
-                serializer = UserInvestmentSerializer(investment)
-                return Response(serializer.data, status=status.HTTP_201_CREATED)
-                
-        except Exception as e:
-            logger.error(f"Error starting investment: {str(e)}")
-            return Response(
-                {'error': 'Failed to start investment'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-
-class InvestmentGrowthView(APIView):
-    """
-    Get investment growth data for charts
-    """
-    permission_classes = [IsAuthenticated, IsProfileCompleted, IsOwnerOrAdmin]
-    
-    def get(self, request, investment_id):
-        try:
-            investment = get_object_or_404(
-                UserInvestment,
-                investment_id=investment_id
-            )
-            
-            # Check permission
-            if investment.user != request.user and request.user.role != 'ADMIN':
-                return Response(
-                    {'error': 'Permission denied'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-            
-            # Update investment value
-            investment.update_current_value()
-            
-            # Calculate growth data
-            growth_data = calculate_investment_growth(investment)
-            
-            serializer = InvestmentGrowthDataSerializer(growth_data, many=True)
-            return Response(serializer.data, status=status.HTTP_200_OK)
-            
-        except UserInvestment.DoesNotExist:
-            return Response(
-                {'error': 'Investment not found'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        except Exception as e:
-            logger.error(f"Error getting investment growth: {str(e)}")
-            return Response(
-                {'error': 'Failed to get growth data'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-
 class NOWPaymentsWebhookView(APIView):
     """
     Handle NOWPayments IPN callbacks
@@ -339,6 +186,35 @@ class NOWPaymentsWebhookView(APIView):
                 {'error': 'Failed to process webhook'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+# User Transaction Endpoints
+
+class UserTransactionsView(generics.ListAPIView):
+    """
+    Get user's transactions
+    """
+    permission_classes = [IsAuthenticated, IsProfileCompleted]
+    serializer_class = TransactionSerializer
+    
+    def get_queryset(self):
+        wallet, created = Wallet.objects.get_or_create(user=self.request.user)
+        return Transaction.objects.filter(
+            wallet=wallet
+        ).order_by('-created_at')
+
+
+class UserDepositsView(generics.ListAPIView):
+    """
+    Get user's deposits
+    """
+    permission_classes = [IsAuthenticated, IsProfileCompleted]
+    serializer_class = DepositSerializer
+    
+    def get_queryset(self):
+        return Deposit.objects.filter(
+            user=self.request.user
+        ).order_by('-created_at')
 
 
 # Admin Views
@@ -424,88 +300,12 @@ class AdminDepositListView(generics.ListAPIView):
         return queryset.order_by('-created_at')
 
 
-class AdminInvestmentListView(generics.ListAPIView):
+class AdminDepositDetailView(generics.RetrieveAPIView):
     """
-    Admin: List all investments
-    """
-    permission_classes = [IsAuthenticated, AdminOnly]
-    serializer_class = UserInvestmentSerializer
-    queryset = UserInvestment.objects.all().order_by('-created_at')
-    
-    def get_queryset(self):
-        queryset = UserInvestment.objects.all()
-        
-        # Filter by status if provided
-        status_filter = self.request.query_params.get('status', None)
-        if status_filter:
-            queryset = queryset.filter(status=status_filter)
-        
-        # Filter by plan if provided
-        plan_id = self.request.query_params.get('plan_id', None)
-        if plan_id:
-            queryset = queryset.filter(plan_id=plan_id)
-        
-        # Filter by user email if provided
-        user_email = self.request.query_params.get('user_email', None)
-        if user_email:
-            queryset = queryset.filter(user__email__icontains=user_email)
-        
-        return queryset.order_by('-created_at')
-
-
-class AdminCreateInvestmentPlanView(generics.CreateAPIView):
-    """
-    Admin: Create investment plan
+    Admin: Get deposit details
     """
     permission_classes = [IsAuthenticated, AdminOnly]
-    serializer_class = InvestmentPlanSerializer
-
-
-class AdminUpdateInvestmentPlanView(generics.UpdateAPIView):
-    """
-    Admin: Update investment plan
-    """
-    permission_classes = [IsAuthenticated, AdminOnly]
-    serializer_class = InvestmentPlanSerializer
-    queryset = InvestmentPlan.objects.all()
-    lookup_field = 'id'
-
-
-class UserInvestmentsView(generics.ListAPIView):
-    """
-    Get user's investments
-    """
-    permission_classes = [IsAuthenticated, IsProfileCompleted]
-    serializer_class = UserInvestmentSerializer
-    
-    def get_queryset(self):
-        return UserInvestment.objects.filter(
-            user=self.request.user
-        ).order_by('-created_at')
-
-
-class UserTransactionsView(generics.ListAPIView):
-    """
-    Get user's transactions
-    """
-    permission_classes = [IsAuthenticated, IsProfileCompleted]
-    serializer_class = TransactionSerializer
-    
-    def get_queryset(self):
-        wallet, created = Wallet.objects.get_or_create(user=self.request.user)
-        return Transaction.objects.filter(
-            wallet=wallet
-        ).order_by('-created_at')
-
-
-class UserDepositsView(generics.ListAPIView):
-    """
-    Get user's deposits
-    """
-    permission_classes = [IsAuthenticated, IsProfileCompleted]
     serializer_class = DepositSerializer
-    
-    def get_queryset(self):
-        return Deposit.objects.filter(
-            user=self.request.user
-        ).order_by('-created_at')
+    queryset = Deposit.objects.all()
+    lookup_field = 'deposit_id'
+
