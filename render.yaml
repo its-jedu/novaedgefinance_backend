@@ -1,0 +1,63 @@
+services:
+  - type: web
+    name: novaedge-api
+    env: python
+    buildCommand: |
+      pip install -r requirements.txt
+      python manage.py collectstatic --noinput
+      python manage.py migrate
+    startCommand: gunicorn novaedge.wsgi:application --workers 4 --worker-class sync --timeout 120 --max-requests 1200 --max-requests-jitter 100
+    envVars:
+      - key: DJANGO_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: novaedge-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: novaedge-redis
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: NOWPAYMENTS_API_KEY
+        sync: false
+      - key: NOWPAYMENTS_IPN_SECRET
+        sync: false
+      - key: EMAIL_HOST_USER
+        sync: false
+      - key: EMAIL_HOST_PASSWORD
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+
+  - type: worker
+    name: novaedge-celery
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: celery -A novaedge worker --loglevel=info
+    envVars:
+      - key: DJANGO_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: novaedge-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: novaedge-redis
+          property: connectionString
+
+  - type: redis
+    name: novaedge-redis
+    ipAllowList:
+      - source: 0.0.0.0/0
+        description: everywhere
+
+databases:
+  - name: novaedge-db
+    databaseName: novaedge
+    user: novaedge
+    plan: standard

@@ -79,6 +79,31 @@ class User(AbstractBaseUser, PermissionsMixin):
     # Email verification
     email_verification_token = models.CharField(max_length=64, null=True, blank=True)
     email_verification_sent_at = models.DateTimeField(null=True, blank=True)
+
+    # Enhanced security fields
+    failed_login_attempts = models.PositiveIntegerField(default=0)
+    locked_until = models.DateTimeField(null=True, blank=True)
+    last_failed_login = models.DateTimeField(null=True, blank=True)
+    
+    # Suspicious activity tracking
+    suspicious_activity_count = models.PositiveIntegerField(default=0)
+    is_under_review = models.BooleanField(default=False)
+    review_reason = models.TextField(blank=True)
+    
+    # Investment limits
+    daily_investment_limit = models.DecimalField(
+        max_digits=20,
+        decimal_places=8,
+        null=True,
+        blank=True,
+        help_text="Daily investment limit in USD"
+    )
+    last_investment_date = models.DateField(null=True, blank=True)
+    daily_investment_total = models.DecimalField(
+        max_digits=20,
+        decimal_places=8,
+        default=0.00
+    )
     
     objects = UserManager()
     
@@ -104,15 +129,62 @@ class User(AbstractBaseUser, PermissionsMixin):
         return False
     
     def increment_failed_attempts(self):
+        """Increment failed login attempts with exponential backoff"""
         self.failed_login_attempts += 1
-        if self.failed_login_attempts >= 5:  # Lock after 5 attempts
-            self.locked_until = timezone.now() + timezone.timedelta(minutes=15)
+        self.last_failed_login = timezone.now()
+        
+        # Exponential backoff: 5 min, 15 min, 30 min, 1 hour, 2 hours, 4 hours, 8 hours...
+        if self.failed_login_attempts >= 5:
+            backoff_minutes = min(15 * (2 ** (self.failed_login_attempts - 5)), 480)  # Max 8 hours
+            self.locked_until = timezone.now() + timezone.timedelta(minutes=backoff_minutes)
+        
         self.save()
     
     def reset_failed_attempts(self):
+        """Reset failed login attempts on successful login"""
         self.failed_login_attempts = 0
         self.locked_until = None
         self.save()
+    
+    def check_daily_investment_limit(self, amount):
+        """Check if user has exceeded daily investment limit"""
+        today = timezone.now().date()
+        
+        if self.daily_investment_limit is None:
+            return True, None
+        
+        if self.last_investment_date != today:
+            # Reset daily total
+            self.daily_investment_total = 0
+            self.last_investment_date = today
+            self.save()
+        
+        if self.daily_investment_total + amount > self.daily_investment_limit:
+            return False, f"Daily investment limit of ${self.daily_investment_limit} exceeded"
+        
+        return True, None
+    
+    def flag_suspicious_activity(self, reason):
+        """Flag user for suspicious activity"""
+        self.suspicious_activity_count += 1
+        self.review_reason = f"{self.review_reason}\n{timezone.now()}: {reason}".strip()
+        
+        if self.suspicious_activity_count >= 3:
+            self.is_under_review = True
+            self.is_active = False
+        
+        self.save()
+        
+        # Send notification to admins
+        try:
+            from notifications.utils import notify_admins
+            notify_admins(
+                title="Suspicious Activity Detected",
+                message=f"User {self.email} flagged: {reason}",
+                metadata={'user_id': self.id, 'reason': reason}
+            )
+        except ImportError:
+            pass
     
     @property
     def is_admin(self):

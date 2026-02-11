@@ -1,0 +1,3 @@
+web: gunicorn novaedge.wsgi:application --workers 4 --worker-class sync --timeout 120 --max-requests 1200 --max-requests-jitter 100
+worker: celery -A novaedge worker --loglevel=info
+beat: celery -A novaedge beat --loglevel=info

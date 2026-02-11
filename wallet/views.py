@@ -10,7 +10,7 @@ from django.db import transaction
 from django.shortcuts import get_object_or_404
 from decimal import Decimal
 import logging
-
+from ..utils import process_webhook_with_idempotency
 from authentication.permissions import IsProfileCompleted, CanMakeDeposits
 from .models import Wallet, Transaction, Deposit
 from .serializers import (
@@ -128,62 +128,52 @@ class CreateDepositView(APIView):
 
 class NOWPaymentsWebhookView(APIView):
     """
-    Handle NOWPayments IPN callbacks
+    Handle NOWPayments IPN callbacks with enhanced security
     """
-    permission_classes = [permissions.AllowAny]  # No authentication for webhooks
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []  # No authentication required
     
     def post(self, request):
         # Get signature from headers
-        signature = request.headers.get('X-Nowpayments-Sig')
+        signature = request.headers.get('X-Nowpayments-Sig', '')
+        payment_id = request.data.get('payment_id')
         
-        # Verify signature
-        nowpayments = NOWPaymentsClient()
-        raw_body = request.body
-        
-        if not nowpayments.verify_webhook_signature(raw_body, signature):
-            logger.warning(f"Invalid webhook signature: {signature}")
-            return Response({'error': 'Invalid signature'}, status=status.HTTP_400_BAD_REQUEST)
+        if not payment_id:
+            logger.error("Webhook missing payment_id")
+            return Response(
+                {'error': 'Missing payment_id'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         try:
-            payload = request.data
+            # Process webhook with idempotency
+            result = process_webhook_with_idempotency(
+                payment_id=payment_id,
+                payload=request.data,
+                signature=signature
+            )
             
-            # Log webhook receipt
-            logger.info(f"NOWPayments webhook received: {payload}")
+            if result['status'] == 'rejected':
+                return Response(
+                    {'error': result['reason']},
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
             
-            payment_id = payload.get('payment_id')
-            status = payload.get('payment_status')
+            if result['status'] == 'ignored':
+                return Response(
+                    {'status': 'ignored', 'message': 'Already processed'},
+                    status=status.HTTP_200_OK
+                )
             
-            if not payment_id:
-                logger.error("Webhook missing payment_id")
-                return Response({'error': 'Missing payment_id'}, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Find deposit
-            try:
-                deposit = Deposit.objects.get(payment_id=payment_id)
-            except Deposit.DoesNotExist:
-                logger.error(f"Deposit not found for payment_id: {payment_id}")
-                return Response({'error': 'Deposit not found'}, status=status.HTTP_404_NOT_FOUND)
-            
-            # Update deposit status
-            deposit.status = status
-            deposit.payment_details = payload
-            deposit.save()
-            
-            # Process if payment is confirmed
-            if status in ['confirmed', 'finished']:
-                deposit.process_confirmation()
-                
-                # Log successful processing
-                logger.info(f"Deposit {deposit.deposit_id} processed successfully")
-                
-                # TODO: Send notifications to user and admin
-            
-            return Response({'status': 'processed'}, status=status.HTTP_200_OK)
+            return Response(
+                {'status': 'processed'},
+                status=status.HTTP_200_OK
+            )
             
         except Exception as e:
-            logger.error(f"Error processing webhook: {str(e)}")
+            logger.error(f"Webhook processing failed: {str(e)}")
             return Response(
-                {'error': 'Failed to process webhook'},
+                {'error': 'Internal server error'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

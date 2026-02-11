@@ -5,6 +5,8 @@ from django.conf import settings
 from django.utils import timezone
 from decimal import Decimal
 import uuid
+from django.db import transaction, models
+from decimal import Decimal
 
 class Wallet(models.Model):
     """
@@ -56,30 +58,74 @@ class Wallet(models.Model):
         """Check if user has sufficient balance for investment"""
         return self.balance_usd >= Decimal(str(amount))
     
-    def credit(self, amount, transaction_type='DEPOSIT'):
-        """Credit amount to wallet"""
-        self.balance_usd += Decimal(str(amount))
+    def credit(self, amount, transaction_type='DEPOSIT', reference=None, 
+               description=None, metadata=None, request=None):
+        """
+        Credit amount to wallet - ALWAYS creates ledger entry
+        """
+        from reporting.models import LedgerEntry
         
-        if transaction_type == 'DEPOSIT':
-            self.total_deposited += Decimal(str(amount))
-        elif transaction_type == 'PROFIT':
-            self.total_profit += Decimal(str(amount))
+        amount = Decimal(str(amount))
         
-        self.save()
+        with transaction.atomic():
+            # Update wallet balance
+            self.balance_usd += amount
+            
+            if transaction_type == 'DEPOSIT':
+                self.total_deposited += amount
+            elif transaction_type == 'PROFIT':
+                self.total_profit += amount
+            
+            self.save()
+            
+            # Create ledger entry (REQUIRED)
+            LedgerEntry.create_entry(
+                user=self.user,
+                transaction_type=transaction_type,
+                amount=amount,
+                wallet=self,
+                source_app='WALLET',
+                reference_id=reference or str(uuid.uuid4()),
+                description=description or f"{transaction_type} of ${amount}",
+                metadata=metadata,
+                request=request
+            )
     
-    def debit(self, amount, transaction_type='INVESTMENT'):
-        """Debit amount from wallet"""
+    def debit(self, amount, transaction_type='INVESTMENT', reference=None,
+              description=None, metadata=None, request=None):
+        """
+        Debit amount from wallet - ALWAYS creates ledger entry
+        """
+        from reporting.models import LedgerEntry
+        
+        amount = Decimal(str(amount))
+        
         if not self.can_invest(amount):
-            raise ValueError("Insufficient balance")
+            raise ValueError(f"Insufficient balance. Available: ${self.balance_usd}, Required: ${amount}")
         
-        self.balance_usd -= Decimal(str(amount))
-        
-        if transaction_type == 'INVESTMENT':
-            self.total_invested += Decimal(str(amount))
-        elif transaction_type == 'WITHDRAWAL':
-            self.total_withdrawn += Decimal(str(amount))
-        
-        self.save()
+        with transaction.atomic():
+            # Update wallet balance
+            self.balance_usd -= amount
+            
+            if transaction_type == 'INVESTMENT':
+                self.total_invested += amount
+            elif transaction_type == 'WITHDRAWAL':
+                self.total_withdrawn += amount
+            
+            self.save()
+            
+            # Create ledger entry (REQUIRED)
+            LedgerEntry.create_entry(
+                user=self.user,
+                transaction_type=transaction_type,
+                amount=-amount,  # Negative for debits
+                wallet=self,
+                source_app='WALLET',
+                reference_id=reference or str(uuid.uuid4()),
+                description=description or f"{transaction_type} of ${amount}",
+                metadata=metadata,
+                request=request
+            )
 
 
 class Transaction(models.Model):
@@ -240,3 +286,51 @@ class Deposit(models.Model):
                     'exchange_rate': str(self.exchange_rate) if self.exchange_rate else None
                 }
             )
+
+class WebhookLog(models.Model):
+    """
+    Log all incoming webhook payloads for idempotency and audit
+    """
+    webhook_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    payment_id = models.CharField(max_length=255, db_index=True)
+    
+    # Payload and signature
+    raw_payload = models.JSONField()
+    headers = models.JSONField(default=dict, blank=True)
+    signature = models.CharField(max_length=512, blank=True)
+    signature_valid = models.BooleanField(default=False)
+    
+    # Processing status
+    processed = models.BooleanField(default=False)
+    processing_error = models.TextField(blank=True)
+    retry_count = models.PositiveIntegerField(default=0)
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Webhook Log'
+        verbose_name_plural = 'Webhook Logs'
+        indexes = [
+            models.Index(fields=['payment_id', 'processed']),
+            models.Index(fields=['created_at']),
+        ]
+    
+    def __str__(self):
+        return f"Webhook {self.webhook_id} - Payment {self.payment_id}"
+    
+    def mark_processed(self):
+        """Mark webhook as successfully processed"""
+        self.processed = True
+        self.processed_at = timezone.now()
+        self.save()
+    
+    def mark_failed(self, error):
+        """Mark webhook as failed with error"""
+        self.processed = False
+        self.processing_error = error[:1000]
+        self.retry_count += 1
+        self.save()
+

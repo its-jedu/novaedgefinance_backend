@@ -5,6 +5,11 @@ from django.conf import settings
 from django.utils import timezone
 from decimal import Decimal
 import uuid
+from django.db import transaction
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 class LedgerEntry(models.Model):
     """
@@ -81,9 +86,53 @@ class LedgerEntry(models.Model):
             models.Index(fields=['source_app', 'created_at']),
             models.Index(fields=['reference_id']),
         ]
+        permissions = [
+            ("can_verify_ledger", "Can verify ledger entries"),
+        ]
     
     def __str__(self):
         return f"Ledger {self.ledger_id}: {self.transaction_type} - ${self.amount}"
+    
+    def save(self, *args, **kwargs):
+        """Override save to prevent modifications"""
+        if self.pk:
+            # This is an update - DISALLOW
+            raise PermissionError("Ledger entries cannot be modified after creation")
+        super().save(*args, **kwargs)
+    
+    def delete(self, *args, **kwargs):
+        """Prevent deletion of ledger entries"""
+        raise PermissionError("Ledger entries cannot be deleted")
+    
+    @classmethod
+    def create_entry(cls, user, transaction_type, amount, wallet, 
+                     source_app, reference_id, description, metadata=None, request=None):
+        """
+        Factory method to create ledger entry with automatic balance tracking
+        """
+        
+        with transaction.atomic():
+            # Get current balance
+            balance_before = wallet.balance_usd
+            balance_after = balance_before + Decimal(str(amount))
+            
+            # Create ledger entry
+            entry = cls.objects.create(
+                user=user,
+                transaction_type=transaction_type,
+                amount=amount,
+                balance_before=balance_before,
+                balance_after=balance_after,
+                source_app=source_app,
+                reference_id=reference_id,
+                description=description,
+                metadata=metadata or {},
+                ip_address=request.META.get('REMOTE_ADDR') if request else None,
+                user_agent=request.META.get('HTTP_USER_AGENT', '') if request else ''
+            )
+            
+            logger.info(f"Ledger entry created: {entry.ledger_id}")
+            return entry
     
     def verify(self, admin_user, notes=''):
         """Verify ledger entry (admin only)"""

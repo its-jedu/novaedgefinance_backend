@@ -1,7 +1,7 @@
 from django.contrib import admin
 
 # Register your models here.
-from .models import Wallet, Transaction, Deposit
+from .models import Wallet, Transaction, Deposit, WebhookLog
 
 @admin.register(Wallet)
 class WalletAdmin(admin.ModelAdmin):
@@ -40,3 +40,26 @@ class DepositAdmin(admin.ModelAdmin):
     
     def get_queryset(self, request):
         return super().get_queryset(request).select_related('user')
+
+@admin.register(WebhookLog)
+class WebhookLogAdmin(admin.ModelAdmin):
+    list_display = ('webhook_id', 'payment_id', 'signature_valid', 
+                   'processed', 'created_at', 'processed_at')
+    list_filter = ('signature_valid', 'processed', 'created_at')
+    search_fields = ('payment_id', 'webhook_id', 'processing_error')
+    readonly_fields = ('webhook_id', 'created_at', 'processed_at', 'retry_count')
+    
+    fieldsets = (
+        (None, {
+            'fields': ('webhook_id', 'payment_id')
+        }),
+        ('Processing', {
+            'fields': ('processed', 'processed_at', 'retry_count', 'processing_error')
+        }),
+        ('Security', {
+            'fields': ('signature', 'signature_valid')
+        }),
+        ('Data', {
+            'fields': ('raw_payload', 'headers')
+        }),
+    )

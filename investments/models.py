@@ -3,8 +3,13 @@ from django.db import models
 # Create your models here.
 from django.conf import settings
 from django.utils import timezone
+from django.db import transaction
 from decimal import Decimal
 import uuid
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 class InvestmentPlan(models.Model):
     """
@@ -434,19 +439,107 @@ class UserInvestment(models.Model):
         if self.end_date and timezone.now() >= self.end_date:
             self.complete_investment()
     
-    def complete_investment(self):
-        """Mark investment as completed"""
-        self.status = self.InvestmentStatus.COMPLETED
-        self.completed_at = timezone.now()
-        self.update_current_value()
-        self.save()
+    @classmethod
+    @transaction.atomic
+    def create_investment(cls, user, plan, amount, request=None):
+        """
+        Atomic investment creation with wallet debit and ledger entry
+        """
+        from wallet.models import Wallet
+        
+        # Get user's wallet
+        wallet = Wallet.objects.select_for_update().get(user=user)
+        
+        # Check balance
+        if not wallet.can_invest(amount):
+            raise ValueError("Insufficient balance")
+        
+        # Calculate dates and returns
+        start_date = timezone.now()
+        end_date = start_date + timezone.timedelta(days=plan.duration_days)
+        
+        avg_multiplier = (plan.min_return_multiplier + plan.max_return_multiplier) / 2
+        expected_total = amount + (amount * (avg_multiplier / Decimal('100')))
+        
+        # Create investment
+        investment = cls.objects.create(
+            user=user,
+            plan=plan,
+            principal_amount=amount,
+            expected_return_multiplier=avg_multiplier,
+            expected_total=expected_total,
+            current_value=amount,
+            start_date=start_date,
+            end_date=end_date,
+            status=cls.InvestmentStatus.ACTIVE,
+            metadata={'source': 'web', 'duration_days': plan.duration_days}
+        )
+        
+        # Debit wallet (creates ledger entry automatically)
+        wallet.debit(
+            amount=amount,
+            transaction_type='INVESTMENT',
+            reference=str(investment.investment_id),
+            description=f"Investment in {plan.name} plan",
+            metadata={
+                'plan_id': plan.id,
+                'plan_name': plan.name,
+                'investment_id': str(investment.investment_id)
+            },
+            request=request
+        )
         
         # Update plan statistics
-        self.plan.total_investors = self.plan.user_investments.filter(
-            status=self.InvestmentStatus.COMPLETED
+        plan.total_invested += amount
+        plan.total_investors = plan.user_investments.filter(
+            status__in=['ACTIVE', 'COMPLETED']
         ).count()
-        self.plan.total_profits_paid += self.total_profit
-        self.plan.save()
+        plan.save()
+        
+        logger.info(f"Investment {investment.investment_id} created atomically")
+        return investment
+    
+    @transaction.atomic
+    def complete_investment(self, request=None):
+        """
+        Atomic investment completion with profit credit and ledger entry
+        """
+        from wallet.models import Wallet
+        
+        if self.status != self.InvestmentStatus.ACTIVE:
+            raise ValueError(f"Cannot complete investment with status {self.status}")
+        
+        # Update current value one last time
+        self.update_current_value()
+        
+        # Calculate profit
+        profit_amount = self.total_profit
+        
+        # Update investment status
+        self.status = self.InvestmentStatus.COMPLETED
+        self.completed_at = timezone.now()
+        self.save()
+        
+        # Credit wallet with profit (creates ledger entry automatically)
+        if profit_amount > 0:
+            wallet = Wallet.objects.select_for_update().get(user=self.user)
+            wallet.credit(
+                amount=profit_amount,
+                transaction_type='PROFIT',
+                reference=str(self.investment_id),
+                description=f"Profit from investment in {self.plan.name}",
+                metadata={
+                    'plan_id': self.plan.id,
+                    'plan_name': self.plan.name,
+                    'principal_amount': str(self.principal_amount),
+                    'profit_amount': str(profit_amount),
+                    'investment_id': str(self.investment_id)
+                },
+                request=request
+            )
+        
+        logger.info(f"Investment {self.investment_id} completed atomically")
+        return profit_amount
     
     def request_withdrawal(self, amount):
         """Request withdrawal from investment"""
