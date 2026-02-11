@@ -37,4 +37,3 @@ class CanViewReports(BasePermission):
         # Check for specific report viewing permission
         return request.user.has_perm('reporting.view_financialreport')
 
-    
