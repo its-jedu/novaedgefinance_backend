@@ -1,34 +1,26 @@
 from django.db import models
-
-# Create your models here.
-from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
-from django.core.validators import RegexValidator
 from django.utils import timezone
 
 class UserManager(BaseUserManager):
-    def create_user(self, email, phone_number, password=None, **extra_fields):
+    def create_user(self, email, password=None, **extra_fields):
         if not email:
             raise ValueError('The Email field must be set')
-        if not phone_number:
-            raise ValueError('The Phone Number field must be set')
         
         email = self.normalize_email(email)
-        user = self.model(email=email, phone_number=phone_number, **extra_fields)
+        user = self.model(email=email, **extra_fields)
         user.set_password(password)
         user.save(using=self._db)
         return user
     
-    def create_superuser(self, email, phone_number, password=None, **extra_fields):
+    def create_superuser(self, email, password=None, **extra_fields):
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
-        extra_fields.setdefault('is_verified', True)
         extra_fields.setdefault('email_verified', True)
-        extra_fields.setdefault('profile_completed', True)
         extra_fields.setdefault('role', 'ADMIN')
         extra_fields.setdefault('is_active', True)
         
-        return self.create_user(email, phone_number, password, **extra_fields)
+        return self.create_user(email, password, **extra_fields)
 
 class User(AbstractBaseUser, PermissionsMixin):
     class Role(models.TextChoices):
@@ -37,16 +29,6 @@ class User(AbstractBaseUser, PermissionsMixin):
     
     # Required fields
     email = models.EmailField(unique=True, verbose_name='Email Address')
-    phone_number = models.CharField(
-        max_length=15,
-        unique=True,
-        validators=[
-            RegexValidator(
-                regex=r'^\+?1?\d{9,15}$',
-                message="Phone number must be entered in the format: '+999999999'. Up to 15 digits allowed."
-            )
-        ]
-    )
     
     # Personal info
     first_name = models.CharField(max_length=30)
@@ -54,9 +36,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     country = models.CharField(max_length=50)
     
     # Status fields
-    is_verified = models.BooleanField(default=False)  # Phone verified
     email_verified = models.BooleanField(default=False)  # Email verified
-    profile_completed = models.BooleanField(default=False)  # Profile completed
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     
@@ -66,21 +46,12 @@ class User(AbstractBaseUser, PermissionsMixin):
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    profile_completed_at = models.DateTimeField(null=True, blank=True)
-    
-    # Login attempts tracking
-    failed_login_attempts = models.PositiveIntegerField(default=0)
-    locked_until = models.DateTimeField(null=True, blank=True)
-    
-    # Phone verification
-    phone_verification_code = models.CharField(max_length=6, null=True, blank=True)
-    phone_verification_sent_at = models.DateTimeField(null=True, blank=True)
     
     # Email verification
     email_verification_token = models.CharField(max_length=64, null=True, blank=True)
     email_verification_sent_at = models.DateTimeField(null=True, blank=True)
-
-    # Enhanced security fields
+    
+    # Login attempts tracking
     failed_login_attempts = models.PositiveIntegerField(default=0)
     locked_until = models.DateTimeField(null=True, blank=True)
     last_failed_login = models.DateTimeField(null=True, blank=True)
@@ -90,10 +61,10 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_under_review = models.BooleanField(default=False)
     review_reason = models.TextField(blank=True)
     
-    # Investment limits
+    # Investment limits (optional, can be used later)
     daily_investment_limit = models.DecimalField(
         max_digits=20,
-        decimal_places=8,
+        decimal_places=2,
         null=True,
         blank=True,
         help_text="Daily investment limit in USD"
@@ -101,14 +72,14 @@ class User(AbstractBaseUser, PermissionsMixin):
     last_investment_date = models.DateField(null=True, blank=True)
     daily_investment_total = models.DecimalField(
         max_digits=20,
-        decimal_places=8,
+        decimal_places=2,
         default=0.00
     )
     
     objects = UserManager()
     
     USERNAME_FIELD = 'email'
-    REQUIRED_FIELDS = ['phone_number', 'first_name', 'last_name', 'country']
+    REQUIRED_FIELDS = ['first_name', 'last_name', 'country']
     
     class Meta:
         verbose_name = 'User'
@@ -138,13 +109,14 @@ class User(AbstractBaseUser, PermissionsMixin):
             backoff_minutes = min(15 * (2 ** (self.failed_login_attempts - 5)), 480)  # Max 8 hours
             self.locked_until = timezone.now() + timezone.timedelta(minutes=backoff_minutes)
         
-        self.save()
+        self.save(update_fields=['failed_login_attempts', 'last_failed_login', 'locked_until'])
     
     def reset_failed_attempts(self):
         """Reset failed login attempts on successful login"""
         self.failed_login_attempts = 0
         self.locked_until = None
-        self.save()
+        self.last_failed_login = None
+        self.save(update_fields=['failed_login_attempts', 'locked_until', 'last_failed_login'])
     
     def check_daily_investment_limit(self, amount):
         """Check if user has exceeded daily investment limit"""
@@ -157,7 +129,7 @@ class User(AbstractBaseUser, PermissionsMixin):
             # Reset daily total
             self.daily_investment_total = 0
             self.last_investment_date = today
-            self.save()
+            self.save(update_fields=['daily_investment_total', 'last_investment_date'])
         
         if self.daily_investment_total + amount > self.daily_investment_limit:
             return False, f"Daily investment limit of ${self.daily_investment_limit} exceeded"
@@ -173,9 +145,9 @@ class User(AbstractBaseUser, PermissionsMixin):
             self.is_under_review = True
             self.is_active = False
         
-        self.save()
+        self.save(update_fields=['suspicious_activity_count', 'review_reason', 'is_under_review', 'is_active'])
         
-        # Send notification to admins
+        # Send notification to admins (optional - can be implemented later)
         try:
             from notifications.utils import notify_admins
             notify_admins(
@@ -191,19 +163,14 @@ class User(AbstractBaseUser, PermissionsMixin):
         return self.role == self.Role.ADMIN
     
     @property
-    def is_fully_verified(self):
-        """Check if user has completed all verification steps"""
-        return self.is_verified and self.email_verified and self.profile_completed
-    
-    @property
     def can_make_deposits(self):
-        """Check if user can make deposits (requires profile completion)"""
-        return self.profile_completed and self.email_verified and self.is_verified
+        """Check if user can make deposits (requires email verification)"""
+        return self.email_verified and self.is_active
 
 
 class InvestmentProfile(models.Model):
     """
-    Investment profile for user profile completion
+    Investment profile for user - optional, can be completed later
     """
     class EmploymentStatus(models.TextChoices):
         EMPLOYED = 'EMPLOYED', 'Employed'
@@ -279,6 +246,10 @@ class InvestmentProfile(models.Model):
     accepted_privacy_policy = models.BooleanField(default=False)
     accepted_risk_disclosure = models.BooleanField(default=False)
     
+    # Profile completion status
+    is_completed = models.BooleanField(default=False)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -290,3 +261,8 @@ class InvestmentProfile(models.Model):
     def __str__(self):
         return f"Investment Profile for {self.user.email}"
     
+    def mark_as_completed(self):
+        """Mark profile as completed"""
+        self.is_completed = True
+        self.completed_at = timezone.now()
+        self.save(update_fields=['is_completed', 'completed_at'])
