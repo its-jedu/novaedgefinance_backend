@@ -112,13 +112,25 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # }
 
 
-# Database Configuration (PostgreSQL)
+# Database Configuration (PostgreSQL) Developement
+# DATABASES = {
+#     'default': dj_database_url.config(
+#         default=f"postgresql://{env('DB_USER')}:{env('DB_PASSWORD')}@{env('DB_HOST')}:{env('DB_PORT')}/{env('DB_NAME')}",
+#         conn_max_age=600,
+#         conn_health_checks=True,
+#     )
+# }
+
+# Production
 DATABASES = {
-    'default': dj_database_url.config(
-        default=f"postgresql://{env('DB_USER')}:{env('DB_PASSWORD')}@{env('DB_HOST')}:{env('DB_PORT')}/{env('DB_NAME')}",
-        conn_max_age=600,
-        conn_health_checks=True,
-    )
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": os.environ.get("DB_NAME"),
+        "USER": os.environ.get("DB_USER"),
+        "PASSWORD": os.environ.get("DB_PASSWORD"),
+        "HOST": os.environ.get("DB_HOST"),
+        "PORT": os.environ.get("DB_PORT", 5432),
+    }
 }
 
 # Password validation

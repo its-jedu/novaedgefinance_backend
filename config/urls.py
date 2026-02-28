@@ -16,10 +16,12 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
+from core.management_views import create_superuser_view
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('', include('core.urls')),
+    path('create-superuser/', create_superuser_view),
     path('api/auth/', include('authentication.urls')),
     path('api/investments/', include('investments.urls')),
     path('api/wallet/', include('wallet.urls')),
