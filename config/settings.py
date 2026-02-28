@@ -59,7 +59,12 @@ INSTALLED_APPS = [
     
     # Local apps
     'authentication',
+    'investments',
     'wallet',
+    'notifications',
+    'referrals',
+    'reporting',
+    'core',
 ]
 
 MIDDLEWARE = [

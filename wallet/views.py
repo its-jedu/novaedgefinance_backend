@@ -10,11 +10,13 @@ from django.db import transaction
 from django.shortcuts import get_object_or_404
 from decimal import Decimal
 import logging
-from ..utils import process_webhook_with_idempotency
+from .utils import process_webhook_with_idempotency
 from authentication.permissions import IsProfileCompleted, CanMakeDeposits
 from .models import Wallet, Transaction, Deposit
+from investments.models import UserInvestment, InvestmentPlan
+from investments.serializers import UserInvestmentSerializer, InvestmentPlanSerializer
 from .serializers import (
-    WalletSerializer, TransactionSerializer,
+    WalletSerializer, TransactionSerializer, 
     DepositSerializer, CreateDepositSerializer,
     WalletOverviewSerializer
 )
@@ -25,105 +27,107 @@ logger = logging.getLogger(__name__)
 
 
 class WalletOverviewView(APIView):
-    """
-    Get wallet overview including balance, profits, and recent transactions
-    """
     permission_classes = [IsAuthenticated, IsProfileCompleted]
-    
+
     def get(self, request):
-        try:
-            # Get or create wallet
-            wallet, created = Wallet.objects.get_or_create(user=request.user)
-            
-            # Get recent transactions
-            recent_transactions = Transaction.objects.filter(
-                wallet=wallet
-            ).order_by('-created_at')[:10]
-            
-            overview_data = {
-                'balance': wallet.balance_usd,
-                'total_deposits': wallet.total_deposited,
-                'total_investments': wallet.total_invested,
-                'total_profits': wallet.total_profit,
-                'recent_transactions': recent_transactions
-            }
-            
-            serializer = WalletOverviewSerializer(overview_data, context={'request': request})
-            return Response(serializer.data, status=status.HTTP_200_OK)
-            
-        except Exception as e:
-            logger.error(f"Error getting wallet overview: {str(e)}")
-            return Response(
-                {'error': 'Failed to get wallet overview'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+        wallet, _ = Wallet.objects.get_or_create(user=request.user)
+        recent_transactions = Transaction.objects.filter(wallet=wallet).order_by('-created_at')[:10]
+        overview_data = {
+            'balance': wallet.balance_usd,
+            'total_deposits': wallet.total_deposited,
+            'total_investments': wallet.total_invested,
+            'total_profits': wallet.total_profit,
+            'recent_transactions': recent_transactions
+        }
+        serializer = WalletOverviewSerializer(overview_data, context={'request': request})
+        return Response(serializer.data)
 
 
 class CreateDepositView(APIView):
-    """
-    Create a NOWPayments deposit
-    """
     permission_classes = [IsAuthenticated, CanMakeDeposits]
-    
+
     def post(self, request):
         serializer = CreateDepositSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        
+        serializer.is_valid(raise_exception=True)
         amount_usd = serializer.validated_data['amount_usd']
         currency = serializer.validated_data['currency']
-        
-        try:
-            # Initialize NOWPayments client
-            nowpayments = NOWPaymentsClient()
-            
-            # Get estimated amount in cryptocurrency
-            estimate = nowpayments.get_estimated_amount(amount_usd, currency)
-            if not estimate:
-                return Response(
-                    {'error': 'Failed to get estimated amount from payment processor'},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
-            
-            # Create invoice
-            invoice = nowpayments.create_invoice(
-                amount_usd=amount_usd,
-                currency=currency,
-                description=f"Deposit of ${amount_usd} to NovaEdgeFinance"
-            )
-            
-            if not invoice:
-                return Response(
-                    {'error': 'Failed to create payment invoice'},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
-            
-            # Create deposit record
-            deposit = Deposit.objects.create(
-                user=request.user,
-                payment_id=invoice.get('id'),
-                invoice_id=invoice.get('invoice_id'),
-                pay_address=invoice.get('pay_address'),
-                pay_currency=currency.upper(),
-                pay_amount=Decimal(str(estimate.get('estimated_amount', 0))),
-                usd_amount=amount_usd,
-                exchange_rate=Decimal(str(estimate.get('estimated_rate', 0))),
-                payment_details=invoice
-            )
-            
-            # Prepare response
-            response_data = DepositSerializer(deposit).data
-            response_data['payment_url'] = invoice.get('invoice_url')
-            response_data['qr_code_url'] = invoice.get('qr_code_url')
-            
-            return Response(response_data, status=status.HTTP_201_CREATED)
-            
-        except Exception as e:
-            logger.error(f"Error creating deposit: {str(e)}")
-            return Response(
-                {'error': 'Failed to create deposit'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+
+        nowpayments = NOWPaymentsClient()
+        estimate = nowpayments.get_estimated_amount(amount_usd, currency)
+        if not estimate:
+            return Response({'error': 'Failed to get estimated amount'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        invoice = nowpayments.create_invoice(amount_usd, currency, description=f"Deposit of ${amount_usd}")
+        if not invoice:
+            return Response({'error': 'Failed to create invoice'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        deposit = Deposit.objects.create(
+            user=request.user,
+            payment_id=invoice.get('id'),
+            invoice_id=invoice.get('invoice_id'),
+            pay_address=invoice.get('pay_address'),
+            pay_currency=currency.upper(),
+            pay_amount=Decimal(str(estimate.get('estimated_amount', 0))),
+            usd_amount=amount_usd,
+            exchange_rate=Decimal(str(estimate.get('estimated_rate', 0))),
+            payment_details=invoice
+        )
+        response_data = DepositSerializer(deposit).data
+        response_data.update({'payment_url': invoice.get('invoice_url'), 'qr_code_url': invoice.get('qr_code_url')})
+        return Response(response_data, status=status.HTTP_201_CREATED)
+
+
+class InvestmentPlansView(APIView):
+    """
+    Public: List investment plans
+    """
+    def get(self, request):
+        plans = InvestmentPlan.objects.all()
+        serializer = InvestmentPlanSerializer(plans, many=True)
+        return Response(serializer.data)
+
+class InvestmentGrowthView(APIView):
+    """
+    Return growth chart data for a given investment
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, investment_id):
+        investment = get_object_or_404(UserInvestment, investment_id=investment_id, user=request.user)
+        growth_data = investment.plan.calculate_growth(investment.principal_amount)  # Replace with real logic
+        return Response(growth_data)
+
+
+class StartInvestmentView(APIView):
+    """
+    Start a new investment
+    """
+    permission_classes = [IsAuthenticated, IsProfileCompleted]
+
+    def post(self, request):
+        # Dummy: Create UserInvestment from request data
+        data = request.data
+        user_investment = UserInvestment.objects.create(
+            user=request.user,
+            plan_id=data.get('plan_id'),
+            principal_amount=Decimal(data.get('amount', 0)),
+            start_date=timezone.now(),
+            end_date=timezone.now() + timezone.timedelta(days=30),
+            status=UserInvestment.InvestmentStatus.ACTIVE
+        )
+        serializer = UserInvestmentSerializer(user_investment)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class UserInvestmentsView(generics.ListAPIView):
+    """
+    List user investments
+    """
+    permission_classes = [IsAuthenticated, IsProfileCompleted]
+    serializer_class = UserInvestmentSerializer
+
+    def get_queryset(self):
+        return UserInvestment.objects.filter(user=self.request.user).order_by('-start_date')
 
 
 class NOWPaymentsWebhookView(APIView):
@@ -299,3 +303,21 @@ class AdminDepositDetailView(generics.RetrieveAPIView):
     queryset = Deposit.objects.all()
     lookup_field = 'deposit_id'
 
+class AdminInvestmentListView(generics.ListAPIView):
+    permission_classes = [IsAuthenticated, AdminOnly]
+    serializer_class = UserInvestmentSerializer
+
+    def get_queryset(self):
+        return UserInvestment.objects.all().order_by('-start_date')
+
+
+class AdminCreateInvestmentPlanView(generics.CreateAPIView):
+    permission_classes = [IsAuthenticated, AdminOnly]
+    serializer_class = InvestmentPlanSerializer
+
+
+class AdminUpdateInvestmentPlanView(generics.UpdateAPIView):
+    permission_classes = [IsAuthenticated, AdminOnly]
+    serializer_class = InvestmentPlanSerializer
+    queryset = InvestmentPlan.objects.all()
+    lookup_field = 'id'

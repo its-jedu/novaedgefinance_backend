@@ -70,6 +70,49 @@ class InvestmentPlanDetailView(generics.RetrieveAPIView):
     queryset = InvestmentPlan.objects.filter(is_active=True)
     lookup_field = 'id'
 
+class WalletOverviewView(APIView):
+    def get(self, request):
+        data = {
+            "balance": 0,
+            "investments": []
+        }
+        return Response(data)
+
+class CreateDepositView(APIView):
+    def post(self, request):
+        # Replace with actual logic to create a deposit
+        data = {
+            "message": "Deposit created successfully",
+            "deposit": request.data
+        }
+        return Response(data, status=status.HTTP_201_CREATED)
+
+class UserTransactionsView(APIView):
+    def get(self, request):
+        # Example response; replace with real logic
+        data = {
+            "transactions": [
+                {"id": 1, "amount": 1000, "status": "completed"},
+                {"id": 2, "amount": 500, "status": "pending"},
+            ]
+        }
+        return Response(data, status=status.HTTP_200_OK)
+
+class UserDepositsView(APIView):
+    def get(self, request):
+        # Example data; replace with your actual query to get user deposits
+        deposits = [
+            {"id": 1, "amount": 1000, "status": "completed"},
+            {"id": 2, "amount": 500, "status": "pending"},
+        ]
+        return Response({"deposits": deposits}, status=status.HTTP_200_OK)
+
+class NOWPaymentsWebhookView(APIView):
+    def post(self, request, *args, **kwargs):
+        # TODO: verify webhook signature here
+        data = request.data
+        # Example: just echo back the data for now
+        return Response({"received": data}, status=status.HTTP_200_OK)
 
 class PlanFAQsView(generics.ListAPIView):
     """
