@@ -1,41 +1,34 @@
-# Core build dependency
-setuptools==75.1.0
-
-# ==============================
 # Core Django
-# ==============================
 Django==4.2.7
 django-environ==0.11.2
-psycopg[binary]==3.2.3
 dj-database-url==2.1.0
 whitenoise==6.6.0
-gunicorn==21.2.0
 
-# ==============================
+# PostgreSQL driver (modern and Python 3.14 compatible)
+psycopg[binary]==3.3.3
+
 # REST API
-# ==============================
 djangorestframework==3.14.0
 djangorestframework-simplejwt==5.3.0
 drf-yasg==1.21.7
 django-filter==23.5
 
-# ==============================
 # Security & CORS
-# ==============================
 django-cors-headers==4.3.1
 python-dotenv==1.0.0
 
-# ==============================
-# Email / Messaging / Background Tasks
-# ==============================
+# Email & SMS (optional)
 twilio==8.9.0
 celery==5.3.4
 redis==5.0.1
+
+# Production server
+gunicorn==21.2.0
+
+# Email API
 resend==0.6.0
 
-# ==============================
-# Development & Testing
-# ==============================
+# Development
 ipython==8.18.1
 autopep8==2.0.4
 pytest==7.4.3
