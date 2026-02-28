@@ -6,6 +6,7 @@ from django.core.exceptions import ValidationError
 import secrets
 from .models import User, InvestmentProfile
 from django.utils import timezone
+from .utils import send_verification_email
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
     password = serializers.CharField(
@@ -57,7 +58,8 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         InvestmentProfile.objects.create(user=user)
         
         # Send email verification
-        self.send_email_verification(user.email, email_token, user.get_full_name())
+        # self.send_email_verification(user.email, email_token, user.get_full_name())
+        send_verification_email(user.email, user.get_full_name(), email_token)
         
         return user
     

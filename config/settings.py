@@ -342,3 +342,7 @@ if REDIS_URL:
         }
     }
 
+
+# Email Configuration with Resend
+RESEND_API_KEY = env('RESEND_API_KEY', default='')
+EMAIL_FROM_ADDRESS = env('EMAIL_FROM_ADDRESS', default='noreply@novaedgefinance.com')

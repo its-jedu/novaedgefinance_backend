@@ -19,6 +19,7 @@ from .serializers import (
     PasswordResetConfirmSerializer
 )
 from .permissions import IsAdminUser, IsActive, IsEmailVerified
+from .utils import send_verification_email
 
 class UserRegistrationView(APIView):
     permission_classes = [AllowAny]
@@ -283,8 +284,8 @@ class ResendVerificationView(APIView):
             user.save(update_fields=['email_verification_token', 'email_verification_sent_at'])
             
             # Send verification email
-            verification_link = f"http://localhost:5173/auth/verify-email?token={new_token}"
-            print(f"[EMAIL SIMULATION] New verification link for {user.email}: {verification_link}")
+            send_verification_email(user.email, user.get_full_name(), new_token)
+            # print(f"[EMAIL SIMULATION] New verification link for {user.email}: {verification_link}")
             
             return Response({
                 'message': 'Verification email sent successfully.'
