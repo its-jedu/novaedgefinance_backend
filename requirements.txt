@@ -4,6 +4,7 @@ django-environ==0.11.2
 dj-database-url==2.1.0
 whitenoise==6.6.0
 setuptools==75.6.0
+django-redis
 
 # PostgreSQL driver (modern and Python 3.14 compatible)
 psycopg[binary]==3.3.3
