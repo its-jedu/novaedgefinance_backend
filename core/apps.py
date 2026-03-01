@@ -5,5 +5,5 @@ class CoreConfig(AppConfig):
     name = 'core'
 
     def ready(self):
-        from .startup import create_superuser
-        create_superuser()
+        from .management_views import create_default_superuser
+        create_default_superuser()
