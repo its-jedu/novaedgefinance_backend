@@ -1,47 +1,67 @@
-# Create novaedge/settings/production.py
+"""
+Django settings for config project.
+Production-ready configuration for Render deployment.
+"""
 
 import os
-import environ
 from pathlib import Path
+import environ
 from datetime import timedelta
 
+# -------------------------
+# Base Configuration
+# -------------------------
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
 env = environ.Env(
-    DEBUG=(bool, False)
+    DEBUG=(bool, False),
 )
 
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
+environ.Env.read_env(os.path.join(BASE_DIR, '.env'))
 
-# Read .env file
-env_file = os.path.join(BASE_DIR, '.env')
-if os.path.exists(env_file):
-    env.read_env(env_file)
-
-# =============================================================================
-# PRODUCTION SECURITY SETTINGS
-# =============================================================================
-
-# SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = env('SECRET_KEY')
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = False
+DEBUG = env.bool('DEBUG', default=False)
 
-# Hosts
-ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['api.novaedgefinance.com'])
+ALLOWED_HOSTS = env.list(
+    "ALLOWED_HOSTS",
+    default=["novaedge-h003.onrender.com"]
+)
 
-# Database
-DATABASES = {
-    'default': env.db('DATABASE_URL')
-}
+# -------------------------
+# Applications
+# -------------------------
 
-# =============================================================================
-# SECURITY MIDDLEWARE
-# =============================================================================
+INSTALLED_APPS = [
+    'django.contrib.admin',
+    'django.contrib.auth',
+    'django.contrib.contenttypes',
+    'django.contrib.sessions',
+    'django.contrib.messages',
+    'django.contrib.staticfiles',
+
+    # Third-party
+    'rest_framework',
+    'rest_framework_simplejwt',
+    'rest_framework_simplejwt.token_blacklist',
+    'corsheaders',
+    'django_filters',
+
+    # Local apps
+    'authentication',
+    'investments',
+    'wallet',
+    'notifications',
+    'referrals',
+    'reporting',
+    'core',
+]
 
 MIDDLEWARE = [
-    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -50,205 +70,201 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-# =============================================================================
-# HTTPS/SSL SETTINGS
-# =============================================================================
+ROOT_URLCONF = 'config.urls'
+WSGI_APPLICATION = 'config.wsgi.application'
 
-SECURE_SSL_REDIRECT = True
-SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-SESSION_COOKIE_SECURE = True
-CSRF_COOKIE_SECURE = True
-SECURE_HSTS_SECONDS = 31536000  # 1 year
-SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-SECURE_HSTS_PRELOAD = True
-SECURE_CONTENT_TYPE_NOSNIFF = True
-SECURE_BROWSER_XSS_FILTER = True
-X_FRAME_OPTIONS = 'DENY'
+# -------------------------
+# Templates
+# -------------------------
 
-# =============================================================================
-# CORS SETTINGS
-# =============================================================================
+TEMPLATES = [
+    {
+        'BACKEND': 'django.template.backends.django.DjangoTemplates',
+        'DIRS': [],
+        'APP_DIRS': True,
+        'OPTIONS': {
+            'context_processors': [
+                'django.template.context_processors.request',
+                'django.contrib.auth.context_processors.auth',
+                'django.contrib.messages.context_processors.messages',
+            ],
+        },
+    },
+]
 
-CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[
-    'https://novaedgefinance.com',
-    'https://www.novaedgefinance.com',
-    'https://admin.novaedgefinance.com'
-])
+# -------------------------
+# Database (Render Postgres)
+# -------------------------
 
-CORS_ALLOW_CREDENTIALS = True
-CORS_EXPOSE_HEADERS = ['Content-Type', 'X-Content-Type-Options']
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": env("DB_NAME"),
+        "USER": env("DB_USER"),
+        "PASSWORD": env("DB_PASSWORD"),
+        "HOST": env("DB_HOST"),
+        "PORT": env("DB_PORT", default="5432"),
+    }
+}
 
-# =============================================================================
-# CSRF SETTINGS
-# =============================================================================
+# -------------------------
+# Password Validation
+# -------------------------
 
-CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=[
-    'https://novaedgefinance.com',
-    'https://www.novaedgefinance.com'
-])
+AUTH_PASSWORD_VALIDATORS = [
+    {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator', 'OPTIONS': {'min_length': 8}},
+    {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
+]
 
-# =============================================================================
-# JWT SETTINGS
-# =============================================================================
+# -------------------------
+# Internationalization
+# -------------------------
+
+LANGUAGE_CODE = 'en-us'
+TIME_ZONE = 'UTC'
+USE_I18N = True
+USE_TZ = True
+
+# -------------------------
+# Static Files
+# -------------------------
+
+STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+
+# -------------------------
+# Media Files
+# -------------------------
+
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+
+DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# -------------------------
+# Custom User
+# -------------------------
+
+AUTH_USER_MODEL = 'authentication.User'
+
+# -------------------------
+# Cache (NO REDIS)
+# -------------------------
+
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+    }
+}
+
+# -------------------------
+# REST Framework
+# -------------------------
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ),
+    'DEFAULT_PERMISSION_CLASSES': (
+        'rest_framework.permissions.IsAuthenticated',
+    ),
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '100/day',
+        'user': '1000/day',
+    },
+    'DEFAULT_FILTER_BACKENDS': [
+        'django_filters.rest_framework.DjangoFilterBackend',
+    ],
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 20,
+}
+
+# -------------------------
+# JWT
+# -------------------------
 
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=15),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
-    'UPDATE_LAST_LOGIN': True,
-    'ALGORITHM': 'HS256',
-    'SIGNING_KEY': SECRET_KEY,
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
 
-# =============================================================================
-# NOWPAYMENTS CONFIGURATION
-# =============================================================================
+# -------------------------
+# CORS
+# -------------------------
 
-NOWPAYMENTS_API_KEY = env('NOWPAYMENTS_API_KEY')
-NOWPAYMENTS_IPN_SECRET = env('NOWPAYMENTS_IPN_SECRET')
-NOWPAYMENTS_BASE_URL = env('NOWPAYMENTS_BASE_URL', default='https://api.nowpayments.io/v1')
+CORS_ALLOWED_ORIGINS = [
+    "https://novaedge-h003.onrender.com",
+    "http://localhost:5173",
+    "http://localhost:3000",
+]
 
-# =============================================================================
-# EMAIL CONFIGURATION
-# =============================================================================
+CORS_ALLOW_CREDENTIALS = True
 
-EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-EMAIL_HOST = env('EMAIL_HOST', default='smtp.gmail.com')
+# -------------------------
+# CSRF
+# -------------------------
+
+CSRF_TRUSTED_ORIGINS = [
+    "https://novaedge-h003.onrender.com",
+]
+
+# -------------------------
+# Email
+# -------------------------
+
+EMAIL_BACKEND = env(
+    'EMAIL_BACKEND',
+    default='django.core.mail.backends.console.EmailBackend'
+)
+EMAIL_HOST = env('EMAIL_HOST', default='')
 EMAIL_PORT = env.int('EMAIL_PORT', default=587)
 EMAIL_USE_TLS = env.bool('EMAIL_USE_TLS', default=True)
-EMAIL_HOST_USER = env('EMAIL_HOST_USER')
-EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD')
-DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='noreply@novaedgefinance.com')
-SERVER_EMAIL = env('SERVER_EMAIL', default='alerts@novaedgefinance.com')
+EMAIL_HOST_USER = env('EMAIL_HOST_USER', default='')
+EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='')
+DEFAULT_FROM_EMAIL = env(
+    'DEFAULT_FROM_EMAIL',
+    default='noreply@novaedgefinance.com'
+)
 
-# =============================================================================
-# LOGGING CONFIGURATION
-# =============================================================================
+# -------------------------
+# Security (Production)
+# -------------------------
+
+if not DEBUG:
+    SECURE_SSL_REDIRECT = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_BROWSER_XSS_FILTER = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_HSTS_SECONDS = 31536000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+# -------------------------
+# Logging (Render-friendly)
+# -------------------------
 
 LOGGING = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'formatters': {
-        'verbose': {
-            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
-            'style': '{',
-        },
-        'simple': {
-            'format': '{levelname} {asctime} {message}',
-            'style': '{',
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
         },
     },
-    'handlers': {
-        'file': {
-            'level': 'INFO',
-            'class': 'logging.handlers.RotatingFileHandler',
-            'filename': os.path.join(BASE_DIR, 'logs', 'novaedge.log'),
-            'maxBytes': 10485760,  # 10MB
-            'backupCount': 10,
-            'formatter': 'verbose',
-        },
-        'error_file': {
-            'level': 'ERROR',
-            'class': 'logging.handlers.RotatingFileHandler',
-            'filename': os.path.join(BASE_DIR, 'logs', 'error.log'),
-            'maxBytes': 10485760,
-            'backupCount': 10,
-            'formatter': 'verbose',
-        },
-        'payments_file': {
-            'level': 'INFO',
-            'class': 'logging.handlers.RotatingFileHandler',
-            'filename': os.path.join(BASE_DIR, 'logs', 'payments.log'),
-            'maxBytes': 10485760,
-            'backupCount': 5,
-            'formatter': 'verbose',
-        },
-    },
-    'loggers': {
-        'django': {
-            'handlers': ['file', 'error_file'],
-            'level': 'INFO',
-            'propagate': True,
-        },
-        'wallet': {
-            'handlers': ['file', 'payments_file'],
-            'level': 'INFO',
-            'propagate': False,
-        },
-        'investments': {
-            'handlers': ['file'],
-            'level': 'INFO',
-            'propagate': False,
-        },
-        'reporting': {
-            'handlers': ['file'],
-            'level': 'INFO',
-            'propagate': False,
-        },
+    "root": {
+        "handlers": ["console"],
+        "level": "INFO",
     },
 }
-
-# =============================================================================
-# STATIC & MEDIA FILES (for Render)
-# =============================================================================
-
-STATIC_URL = '/static/'
-STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
-
-MEDIA_URL = '/media/'
-MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
-
-# =============================================================================
-# CELERY CONFIGURATION (for async tasks)
-# =============================================================================
-
-CELERY_BROKER_URL = env('REDIS_URL', default='redis://localhost:6379')
-CELERY_RESULT_BACKEND = env('REDIS_URL', default='redis://localhost:6379')
-CELERY_ACCEPT_CONTENT = ['json']
-CELERY_TASK_SERIALIZER = 'json'
-CELERY_RESULT_SERIALIZER = 'json'
-CELERY_TIMEZONE = 'UTC'
-
-# =============================================================================
-# SITE URLS
-# =============================================================================
-
-SITE_URL = env('SITE_URL', default='https://api.novaedgefinance.com')
-FRONTEND_URL = env('FRONTEND_URL', default='https://novaedgefinance.com')
-
-# =============================================================================
-# APP SPECIFIC SETTINGS
-# =============================================================================
-
-# Referral settings
-REFERRAL_BONUS_AMOUNT = env.decimal('REFERRAL_BONUS_AMOUNT', default=5.00)
-REFERRAL_MIN_DEPOSIT = env.decimal('REFERRAL_MIN_DEPOSIT', default=10.00)
-
-# Investment settings
-INVESTMENT_DAILY_LIMIT = env.decimal('INVESTMENT_DAILY_LIMIT', default=10000.00)
-INVESTMENT_AUTO_COMPOUND = env.bool('INVESTMENT_AUTO_COMPOUND', default=True)
-
-# Security settings
-MAX_FAILED_LOGIN_ATTEMPTS = env.int('MAX_FAILED_LOGIN_ATTEMPTS', default=5)
-ACCOUNT_LOCKOUT_MINUTES = env.int('ACCOUNT_LOCKOUT_MINUTES', default=15)
-
-# =============================================================================
-# SENTRY CONFIGURATION (Error tracking)
-# =============================================================================
-
-SENTRY_DSN = env('SENTRY_DSN', default=None)
-if SENTRY_DSN:
-    import sentry_sdk
-    from sentry_sdk.integrations.django import DjangoIntegration
-    from sentry_sdk.integrations.celery import CeleryIntegration
-    
-    sentry_sdk.init(
-        dsn=SENTRY_DSN,
-        integrations=[DjangoIntegration(), CeleryIntegration()],
-        traces_sample_rate=0.1,
-        send_default_pii=False,
-        environment="production",
-    )
