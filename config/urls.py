@@ -21,7 +21,7 @@ from core.management_views import create_default_superuser
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('', include('core.urls')),
-    path('create-superuser/', create_default_superuser),
+    path("create-superuser/", create_default_superuser, name="create_superuser"),
     path('api/auth/', include('authentication.urls')),
     path('api/investments/', include('investments.urls')),
     path('api/wallet/', include('wallet.urls')),

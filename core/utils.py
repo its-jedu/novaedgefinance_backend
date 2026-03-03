@@ -1,16 +1,15 @@
 from django.conf import settings
-from django.http import JsonResponse
 from authentication.models import User
 
 
-def create_default_superuser(request):
+def create_default_superuser_if_needed():
     if not settings.DEBUG:
-        return JsonResponse({"error": "Not allowed in production"}, status=403)
+        return
 
     email = "admin@novaedgefinance.com"
 
     if User.objects.filter(email=email).exists():
-        return JsonResponse({"message": "Superuser already exists"})
+        return
 
     User.objects.create_superuser(
         email=email,
@@ -20,4 +19,4 @@ def create_default_superuser(request):
         country="USA"
     )
 
-    return JsonResponse({"message": "Default superuser created successfully"})
+    print("Default superuser created")
