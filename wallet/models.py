@@ -1,6 +1,4 @@
 from django.db import models
-
-# Create your models here.
 from django.conf import settings
 from django.utils import timezone
 from decimal import Decimal
@@ -63,7 +61,12 @@ class Wallet(models.Model):
         """
         Credit amount to wallet - ALWAYS creates ledger entry
         """
-        from reporting.models import LedgerEntry
+        try:
+            from reporting.models import LedgerEntry
+        except ImportError:
+            LedgerEntry = None
+            logger = logging.getLogger(__name__)
+            logger.warning("Reporting app not installed - ledger entry not created")
         
         amount = Decimal(str(amount))
         
@@ -78,25 +81,31 @@ class Wallet(models.Model):
             
             self.save()
             
-            # Create ledger entry (REQUIRED)
-            LedgerEntry.create_entry(
-                user=self.user,
-                transaction_type=transaction_type,
-                amount=amount,
-                wallet=self,
-                source_app='WALLET',
-                reference_id=reference or str(uuid.uuid4()),
-                description=description or f"{transaction_type} of ${amount}",
-                metadata=metadata,
-                request=request
-            )
+            # Create ledger entry if available
+            if LedgerEntry:
+                LedgerEntry.create_entry(
+                    user=self.user,
+                    transaction_type=transaction_type,
+                    amount=amount,
+                    wallet=self,
+                    source_app='WALLET',
+                    reference_id=reference or str(uuid.uuid4()),
+                    description=description or f"{transaction_type} of ${amount}",
+                    metadata=metadata,
+                    request=request
+                )
     
     def debit(self, amount, transaction_type='INVESTMENT', reference=None,
               description=None, metadata=None, request=None):
         """
         Debit amount from wallet - ALWAYS creates ledger entry
         """
-        from reporting.models import LedgerEntry
+        try:
+            from reporting.models import LedgerEntry
+        except ImportError:
+            LedgerEntry = None
+            logger = logging.getLogger(__name__)
+            logger.warning("Reporting app not installed - ledger entry not created")
         
         amount = Decimal(str(amount))
         
@@ -114,18 +123,19 @@ class Wallet(models.Model):
             
             self.save()
             
-            # Create ledger entry (REQUIRED)
-            LedgerEntry.create_entry(
-                user=self.user,
-                transaction_type=transaction_type,
-                amount=-amount,  # Negative for debits
-                wallet=self,
-                source_app='WALLET',
-                reference_id=reference or str(uuid.uuid4()),
-                description=description or f"{transaction_type} of ${amount}",
-                metadata=metadata,
-                request=request
-            )
+            # Create ledger entry if available
+            if LedgerEntry:
+                LedgerEntry.create_entry(
+                    user=self.user,
+                    transaction_type=transaction_type,
+                    amount=-amount,  # Negative for debits
+                    wallet=self,
+                    source_app='WALLET',
+                    reference_id=reference or str(uuid.uuid4()),
+                    description=description or f"{transaction_type} of ${amount}",
+                    metadata=metadata,
+                    request=request
+                )
 
 
 class Transaction(models.Model):
@@ -222,6 +232,7 @@ class Deposit(models.Model):
     pay_currency = models.CharField(max_length=10)  # BTC, ETH, USDT, etc.
     pay_amount = models.DecimalField(max_digits=20, decimal_places=8)
     usd_amount = models.DecimalField(max_digits=20, decimal_places=8)
+    actually_paid = models.DecimalField(max_digits=20, decimal_places=8, null=True, blank=True)
     
     # Exchange rate at time of payment
     exchange_rate = models.DecimalField(
@@ -250,6 +261,12 @@ class Deposit(models.Model):
         ordering = ['-created_at']
         verbose_name = 'Deposit'
         verbose_name_plural = 'Deposits'
+        indexes = [
+            models.Index(fields=['payment_id']),
+            models.Index(fields=['status']),
+            models.Index(fields=['user', 'status']),
+            models.Index(fields=['created_at']),
+        ]
     
     def __str__(self):
         return f"Deposit {self.deposit_id} - {self.user.email} - ${self.usd_amount}"
@@ -270,7 +287,12 @@ class Deposit(models.Model):
             wallet, created = Wallet.objects.get_or_create(user=self.user)
             
             # Credit amount to wallet
-            wallet.credit(self.usd_amount, transaction_type='DEPOSIT')
+            wallet.credit(
+                amount=self.usd_amount, 
+                transaction_type='DEPOSIT',
+                reference=str(self.payment_id),
+                description=f"Deposit via {self.pay_currency} - NOWPayments"
+            )
             
             # Record transaction
             Transaction.objects.create(
@@ -281,11 +303,13 @@ class Deposit(models.Model):
                 description=f"Deposit via {self.pay_currency} - NOWPayments ID: {self.payment_id}",
                 reference=str(self.payment_id),
                 metadata={
+                    'deposit_id': str(self.deposit_id),
                     'currency': self.pay_currency,
                     'pay_amount': str(self.pay_amount),
                     'exchange_rate': str(self.exchange_rate) if self.exchange_rate else None
                 }
             )
+
 
 class WebhookLog(models.Model):
     """
@@ -333,4 +357,3 @@ class WebhookLog(models.Model):
         self.processing_error = error[:1000]
         self.retry_count += 1
         self.save()
-
