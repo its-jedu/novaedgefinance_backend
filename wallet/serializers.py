@@ -137,3 +137,4 @@ class WalletOverviewSerializer(serializers.Serializer):
                 representation[key] = float(value)
         
         return representation
+

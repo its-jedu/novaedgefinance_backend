@@ -5,6 +5,7 @@ urlpatterns = [
     # User Wallet Endpoints
     path('overview/', views.WalletOverviewView.as_view(), name='wallet-overview'),
     path('deposits/create/', views.CreateDepositView.as_view(), name='create-deposit'),
+    path('deposits/status/', views.DepositStatusView.as_view(), name='deposit-status'),
     path('plans/', views.InvestmentPlansView.as_view(), name='investment-plans'),
     path('investments/start/', views.StartInvestmentView.as_view(), name='start-investment'),
     path('investments/my/', views.UserInvestmentsView.as_view(), name='my-investments'),
@@ -23,3 +24,4 @@ urlpatterns = [
     path('admin/plans/create/', views.AdminCreateInvestmentPlanView.as_view(), name='admin-create-plan'),
     path('admin/plans/<int:id>/update/', views.AdminUpdateInvestmentPlanView.as_view(), name='admin-update-plan'),
 ]
+

@@ -38,14 +38,12 @@ class WalletOverviewView(APIView):
         wallet, _ = Wallet.objects.get_or_create(user=request.user)
         recent_transactions = Transaction.objects.filter(wallet=wallet).order_by('-created_at')[:10]
         
-        # Get active investments
         from investments.models import UserInvestment
         active_investments = UserInvestment.objects.filter(
             user=request.user,
             status='ACTIVE'
         )
         
-        # Calculate total invested and total profit
         total_invested = active_investments.aggregate(
             total=models.Sum('principal_amount')
         )['total'] or Decimal('0.00')
@@ -86,7 +84,6 @@ class CreateDepositView(APIView):
         if plan_id:
             try:
                 plan = InvestmentPlan.objects.get(id=plan_id, is_active=True)
-                # Check if amount is within plan limits
                 can_invest, message = plan.can_invest(amount_usd)
                 if not can_invest:
                     return Response({'error': message}, status=status.HTTP_400_BAD_REQUEST)
@@ -120,20 +117,29 @@ class CreateDepositView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-        # Convert Decimal values to strings for JSON serialization
+        # Extract invoice data safely
+        pay_address = invoice.get('pay_address')
+        pay_amount = Decimal(str(invoice.get('pay_amount', 0)))
+        pay_currency = invoice.get('pay_currency', currency).upper()
+        exchange_rate = Decimal(str(invoice.get('exchange_rate', 0))) if invoice.get('exchange_rate') else None
+        invoice_url = invoice.get('invoice_url')
+        qr_code_url = invoice.get('qr_code_url')
+        expires_at = invoice.get('expires_at')
+
+        # Payment details for storage
         payment_details = {
             'invoice': {
                 'id': invoice.get('id'),
                 'invoice_id': invoice.get('invoice_id'),
-                'invoice_url': invoice.get('invoice_url'),
-                'pay_address': invoice.get('pay_address'),
-                'pay_amount': str(invoice.get('pay_amount', '0')),
-                'pay_currency': invoice.get('pay_currency'),
+                'invoice_url': invoice_url,
+                'pay_address': pay_address,
+                'pay_amount': str(pay_amount),
+                'pay_currency': pay_currency,
                 'price_amount': str(invoice.get('price_amount', '0')),
                 'price_currency': invoice.get('price_currency'),
-                'exchange_rate': str(invoice.get('exchange_rate', '0')),
-                'expires_at': invoice.get('expires_at'),
-                'qr_code_url': invoice.get('qr_code_url'),
+                'exchange_rate': str(exchange_rate) if exchange_rate else '0',
+                'expires_at': str(expires_at) if expires_at else None,
+                'qr_code_url': qr_code_url,
                 'order_id': invoice.get('order_id'),
                 'status': invoice.get('status')
             },
@@ -141,30 +147,34 @@ class CreateDepositView(APIView):
             'plan_name': plan.name if plan else None
         }
 
-        # Create deposit record - convert all Decimal to string
+        # Create deposit record
         deposit = Deposit.objects.create(
             user=request.user,
             payment_id=str(invoice.get('id')),
             invoice_id=invoice.get('invoice_id'),
-            pay_address=invoice.get('pay_address'),
-            pay_currency=currency.upper(),
-            pay_amount=Decimal(str(invoice.get('pay_amount', 0))),
+            pay_address=pay_address,
+            pay_currency=pay_currency,
+            pay_amount=pay_amount,
             usd_amount=amount_usd,
-            exchange_rate=Decimal(str(invoice.get('exchange_rate', 0))) if invoice.get('exchange_rate') else None,
-            payment_details=payment_details,  # Now all values are JSON serializable
+            exchange_rate=exchange_rate,
+            payment_details=payment_details,
             status=Deposit.PaymentStatus.WAITING
         )
         
-        # Prepare response data
-        response_data = DepositSerializer(deposit).data
-        response_data.update({
-            'payment_url': invoice.get('invoice_url'),
-            'qr_code_url': invoice.get('qr_code_url'),
-            'expires_at': invoice.get('expires_at'),
-            'pay_address': invoice.get('pay_address'),
-            'pay_amount': str(invoice.get('pay_amount')),  # Convert to string for JSON
-            'exchange_rate': str(invoice.get('exchange_rate')) if invoice.get('exchange_rate') else None
-        })
+        # Build clean response with all needed fields
+        response_data = {
+            'deposit_id': str(deposit.deposit_id),
+            'payment_id': str(deposit.payment_id),
+            'pay_address': pay_address,
+            'pay_currency': pay_currency,
+            'pay_amount': str(pay_amount),
+            'usd_amount': str(amount_usd),
+            'exchange_rate': str(exchange_rate) if exchange_rate else '0',
+            'payment_url': invoice_url,
+            'qr_code_url': qr_code_url,
+            'expires_at': str(expires_at) if expires_at else None,
+            'status': 'WAITING'
+        }
         
         return Response(response_data, status=status.HTTP_201_CREATED)
 
@@ -203,7 +213,6 @@ class InvestmentPlansView(APIView):
     def get(self, request):
         plans = InvestmentPlan.objects.filter(is_active=True).order_by('display_order', 'min_amount')
         
-        # Add user's current plan if any
         current_investment = UserInvestment.objects.filter(
             user=request.user,
             status='ACTIVE'
@@ -230,9 +239,7 @@ class InvestmentGrowthView(APIView):
             user=request.user
         )
         
-        # Generate growth data for the last 30 days
         from datetime import timedelta
-        import random
         
         end_date = timezone.now()
         start_date = end_date - timedelta(days=30)
@@ -247,7 +254,6 @@ class InvestmentGrowthView(APIView):
         while current_date <= end_date:
             growth_data['labels'].append(current_date.strftime('%Y-%m-%d'))
             
-            # Calculate simulated growth based on plan parameters
             days_passed = (current_date - investment.start_date).days
             if days_passed < 0:
                 value = float(investment.principal_amount)
@@ -274,7 +280,6 @@ class StartInvestmentView(APIView):
         plan_id = data.get('plan_id')
         amount = Decimal(data.get('amount', 0))
         
-        # Validate plan
         try:
             plan = InvestmentPlan.objects.get(id=plan_id, is_active=True)
         except InvestmentPlan.DoesNotExist:
@@ -283,12 +288,10 @@ class StartInvestmentView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        # Check amount limits
         can_invest, message = plan.can_invest(amount)
         if not can_invest:
             return Response({'error': message}, status=status.HTTP_400_BAD_REQUEST)
         
-        # Check wallet balance
         wallet = Wallet.objects.select_for_update().get(user=request.user)
         if wallet.balance_usd < amount:
             return Response(
@@ -296,15 +299,12 @@ class StartInvestmentView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Calculate investment dates
         start_date = timezone.now()
         end_date = start_date + timezone.timedelta(days=plan.max_duration_days or 30)
         
-        # Calculate expected returns
         avg_multiplier = (plan.min_return_multiplier + plan.max_return_multiplier) / 2
         expected_total = amount + (amount * (avg_multiplier / Decimal('100')))
         
-        # Create investment
         user_investment = UserInvestment.objects.create(
             user=request.user,
             plan=plan,
@@ -317,7 +317,6 @@ class StartInvestmentView(APIView):
             status=UserInvestment.InvestmentStatus.ACTIVE
         )
         
-        # Debit wallet
         wallet.debit(
             amount=amount,
             transaction_type='INVESTMENT',
@@ -331,7 +330,6 @@ class StartInvestmentView(APIView):
             request=request
         )
         
-        # Update plan statistics
         plan.total_invested += amount
         plan.total_investors = plan.user_investments.filter(
             status__in=['ACTIVE', 'COMPLETED']
@@ -372,10 +370,9 @@ class NOWPaymentsWebhookView(APIView):
     Handle NOWPayments IPN callbacks with enhanced security
     """
     permission_classes = [permissions.AllowAny]
-    authentication_classes = []  # No authentication required
+    authentication_classes = []
     
     def post(self, request):
-        # Get signature from headers
         signature = request.headers.get('X-Nowpayments-Sig', '')
         payment_id = request.data.get('payment_id')
         
@@ -387,7 +384,6 @@ class NOWPaymentsWebhookView(APIView):
             )
         
         try:
-            # Verify signature
             secret = settings.NOWPAYMENTS_IPN_SECRET
             payload = json.dumps(request.data, separators=(',', ':')).encode('utf-8')
             expected_signature = hmac.new(
@@ -405,7 +401,6 @@ class NOWPaymentsWebhookView(APIView):
                     status=status.HTTP_401_UNAUTHORIZED
                 )
             
-            # Process webhook with idempotency
             result = process_webhook_with_idempotency(
                 payment_id=payment_id,
                 payload=request.data,
@@ -419,7 +414,6 @@ class NOWPaymentsWebhookView(APIView):
                     status=status.HTTP_200_OK
                 )
             
-            # Get deposit
             try:
                 deposit = Deposit.objects.get(payment_id=payment_id)
             except Deposit.DoesNotExist:
@@ -429,22 +423,16 @@ class NOWPaymentsWebhookView(APIView):
                     status=status.HTTP_404_NOT_FOUND
                 )
             
-            # Update deposit status based on webhook
             payment_status = request.data.get('payment_status')
             
             if payment_status in ['finished', 'confirmed']:
                 deposit.status = Deposit.PaymentStatus.CONFIRMED
-                
-                # Update payment details with webhook data (convert Decimals to strings)
                 if 'payment_details' not in deposit.payment_details:
                     deposit.payment_details = {}
                 deposit.payment_details['webhook'] = json.loads(json.dumps(request.data, default=str))
                 deposit.save()
-                
-                # Process confirmation
                 deposit.process_confirmation()
                 
-                # Create notification
                 try:
                     from notifications.models import Notification
                     Notification.objects.create(
@@ -489,9 +477,6 @@ class NOWPaymentsWebhookView(APIView):
 # User Transaction Endpoints
 
 class UserTransactionsView(generics.ListAPIView):
-    """
-    Get user's transactions with pagination and filtering
-    """
     permission_classes = [IsAuthenticated, IsProfileCompleted]
     serializer_class = TransactionSerializer
     
@@ -499,12 +484,10 @@ class UserTransactionsView(generics.ListAPIView):
         wallet, created = Wallet.objects.get_or_create(user=self.request.user)
         queryset = Transaction.objects.filter(wallet=wallet)
         
-        # Filter by type
         tx_type = self.request.query_params.get('type')
         if tx_type:
             queryset = queryset.filter(transaction_type=tx_type.upper())
         
-        # Filter by date range
         start_date = self.request.query_params.get('start_date')
         end_date = self.request.query_params.get('end_date')
         
@@ -517,9 +500,6 @@ class UserTransactionsView(generics.ListAPIView):
 
 
 class UserDepositsView(generics.ListAPIView):
-    """
-    Get user's deposits
-    """
     permission_classes = [IsAuthenticated, IsProfileCompleted]
     serializer_class = DepositSerializer
     
@@ -532,22 +512,16 @@ class UserDepositsView(generics.ListAPIView):
 # Admin Views
 
 class AdminWalletListView(generics.ListAPIView):
-    """
-    Admin: List all wallets
-    """
     permission_classes = [IsAuthenticated, AdminOnly]
     serializer_class = WalletSerializer
-    queryset = Wallet.objects.all().order_by('-created_at')
     
     def get_queryset(self):
         queryset = Wallet.objects.all()
         
-        # Filter by user email if provided
         user_email = self.request.query_params.get('user_email', None)
         if user_email:
             queryset = queryset.filter(user__email__icontains=user_email)
         
-        # Filter by balance range
         min_balance = self.request.query_params.get('min_balance')
         max_balance = self.request.query_params.get('max_balance')
         
@@ -560,27 +534,20 @@ class AdminWalletListView(generics.ListAPIView):
 
 
 class AdminTransactionListView(generics.ListAPIView):
-    """
-    Admin: List all transactions
-    """
     permission_classes = [IsAuthenticated, AdminOnly]
     serializer_class = TransactionSerializer
-    queryset = Transaction.objects.all().order_by('-created_at')
     
     def get_queryset(self):
         queryset = Transaction.objects.all()
         
-        # Filter by transaction type if provided
         transaction_type = self.request.query_params.get('type', None)
         if transaction_type:
             queryset = queryset.filter(transaction_type=transaction_type)
         
-        # Filter by user email if provided
         user_email = self.request.query_params.get('user_email', None)
         if user_email:
             queryset = queryset.filter(wallet__user__email__icontains=user_email)
         
-        # Filter by date range if provided
         start_date = self.request.query_params.get('start_date', None)
         end_date = self.request.query_params.get('end_date', None)
         
@@ -593,27 +560,20 @@ class AdminTransactionListView(generics.ListAPIView):
 
 
 class AdminDepositListView(generics.ListAPIView):
-    """
-    Admin: List all deposits
-    """
     permission_classes = [IsAuthenticated, AdminOnly]
     serializer_class = DepositSerializer
-    queryset = Deposit.objects.all().order_by('-created_at')
     
     def get_queryset(self):
         queryset = Deposit.objects.all()
         
-        # Filter by status if provided
         status_filter = self.request.query_params.get('status', None)
         if status_filter:
             queryset = queryset.filter(status=status_filter)
         
-        # Filter by user email if provided
         user_email = self.request.query_params.get('user_email', None)
         if user_email:
             queryset = queryset.filter(user__email__icontains=user_email)
         
-        # Filter by currency if provided
         currency = self.request.query_params.get('currency', None)
         if currency:
             queryset = queryset.filter(pay_currency=currency.upper())
@@ -622,9 +582,6 @@ class AdminDepositListView(generics.ListAPIView):
 
 
 class AdminDepositDetailView(generics.RetrieveAPIView):
-    """
-    Admin: Get deposit details
-    """
     permission_classes = [IsAuthenticated, AdminOnly]
     serializer_class = DepositSerializer
     queryset = Deposit.objects.all()
@@ -649,3 +606,4 @@ class AdminUpdateInvestmentPlanView(generics.UpdateAPIView):
     serializer_class = InvestmentPlanSerializer
     queryset = InvestmentPlan.objects.all()
     lookup_field = 'id'
+
