@@ -93,7 +93,7 @@ TEMPLATES = [
 ]
 
 # -------------------------
-# Database (Render Postgres)
+# Database (Render Postgresin)
 # -------------------------
 
 DATABASES = {
@@ -106,6 +106,23 @@ DATABASES = {
         "PORT": env("DB_PORT", default="5432"),
     }
 }
+
+
+# Production
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.mysql",
+        "NAME": env("DB_NAME"),
+        "USER": env("DB_USER"),
+        "PASSWORD": env("DB_PASSWORD"),
+        "HOST": env("DB_HOST"),
+        "PORT": "3306",
+        "OPTIONS": {
+            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'"
+        }
+    }
+}
+
 
 # -------------------------
 # Password Validation
@@ -216,7 +233,10 @@ CORS_ALLOW_CREDENTIALS = True
 # -------------------------
 
 CSRF_TRUSTED_ORIGINS = [
-    "https://novaedge-h003.onrender.com",
+    "https://novaedgefinance.com",
+    "https://api.novaedgefinance.com",
+    "http://localhost:5173",
+    "http://localhost:3000",
 ]
 
 # -------------------------
