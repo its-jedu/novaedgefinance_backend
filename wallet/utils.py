@@ -135,8 +135,20 @@ class NOWPaymentsClient:
                 timeout=30
             )
             
-            if response.status_code == 201:
+            # NOWPayments returns 200 for successful invoice creation (not 201)
+            if response.status_code in [200, 201]:
                 data = response.json()
+                
+                # Check if response contains an error
+                if data.get('status') is False:
+                    logger.error(f"NOWPayments API error in response: {data}")
+                    return None
+                
+                # Ensure we have required fields
+                if not data.get('id'):
+                    logger.error(f"Missing invoice ID in response: {data}")
+                    return None
+                    
                 logger.info(f"NOWPayments invoice created: {data.get('id')} for order: {order_id}")
                 
                 # Enhance response with additional useful fields

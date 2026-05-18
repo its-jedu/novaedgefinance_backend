@@ -14,6 +14,7 @@ import hmac
 from django.db import models
 import hashlib
 import json
+from django.conf import settings
 from .utils import process_webhook_with_idempotency
 from authentication.permissions import IsProfileCompleted, CanMakeDeposits
 from .models import Wallet, Transaction, Deposit, WebhookLog
@@ -108,7 +109,8 @@ class CreateDepositView(APIView):
         invoice = nowpayments.create_invoice(
             amount_usd, 
             currency, 
-            description=f"Deposit of ${amount_usd}" + (f" for {plan.name}" if plan else "")
+            description=f"Deposit of ${amount_usd}" + (f" for {plan.name}" if plan else ""),
+            user_id=request.user.id
         )
         
         if not invoice:
@@ -118,21 +120,38 @@ class CreateDepositView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-        # Create deposit record
+        # Convert Decimal values to strings for JSON serialization
+        payment_details = {
+            'invoice': {
+                'id': invoice.get('id'),
+                'invoice_id': invoice.get('invoice_id'),
+                'invoice_url': invoice.get('invoice_url'),
+                'pay_address': invoice.get('pay_address'),
+                'pay_amount': str(invoice.get('pay_amount', '0')),
+                'pay_currency': invoice.get('pay_currency'),
+                'price_amount': str(invoice.get('price_amount', '0')),
+                'price_currency': invoice.get('price_currency'),
+                'exchange_rate': str(invoice.get('exchange_rate', '0')),
+                'expires_at': invoice.get('expires_at'),
+                'qr_code_url': invoice.get('qr_code_url'),
+                'order_id': invoice.get('order_id'),
+                'status': invoice.get('status')
+            },
+            'plan_id': plan_id,
+            'plan_name': plan.name if plan else None
+        }
+
+        # Create deposit record - convert all Decimal to string
         deposit = Deposit.objects.create(
             user=request.user,
-            payment_id=invoice.get('id'),
+            payment_id=str(invoice.get('id')),
             invoice_id=invoice.get('invoice_id'),
             pay_address=invoice.get('pay_address'),
             pay_currency=currency.upper(),
-            pay_amount=Decimal(str(estimate.get('estimated_amount', 0))),
+            pay_amount=Decimal(str(invoice.get('pay_amount', 0))),
             usd_amount=amount_usd,
-            exchange_rate=Decimal(str(estimate.get('estimated_rate', 0))),
-            payment_details={
-                'invoice': invoice,
-                'plan_id': plan_id,
-                'plan_name': plan.name if plan else None
-            },
+            exchange_rate=Decimal(str(invoice.get('exchange_rate', 0))) if invoice.get('exchange_rate') else None,
+            payment_details=payment_details,  # Now all values are JSON serializable
             status=Deposit.PaymentStatus.WAITING
         )
         
@@ -142,7 +161,9 @@ class CreateDepositView(APIView):
             'payment_url': invoice.get('invoice_url'),
             'qr_code_url': invoice.get('qr_code_url'),
             'expires_at': invoice.get('expires_at'),
-            'pay_address': invoice.get('pay_address')
+            'pay_address': invoice.get('pay_address'),
+            'pay_amount': str(invoice.get('pay_amount')),  # Convert to string for JSON
+            'exchange_rate': str(invoice.get('exchange_rate')) if invoice.get('exchange_rate') else None
         })
         
         return Response(response_data, status=status.HTTP_201_CREATED)
@@ -388,7 +409,8 @@ class NOWPaymentsWebhookView(APIView):
             result = process_webhook_with_idempotency(
                 payment_id=payment_id,
                 payload=request.data,
-                signature=signature
+                signature=signature,
+                request=request
             )
             
             if result['status'] == 'ignored':
@@ -412,32 +434,43 @@ class NOWPaymentsWebhookView(APIView):
             
             if payment_status in ['finished', 'confirmed']:
                 deposit.status = Deposit.PaymentStatus.CONFIRMED
-                deposit.payment_details.update({'webhook': request.data})
+                
+                # Update payment details with webhook data (convert Decimals to strings)
+                if 'payment_details' not in deposit.payment_details:
+                    deposit.payment_details = {}
+                deposit.payment_details['webhook'] = json.loads(json.dumps(request.data, default=str))
                 deposit.save()
                 
                 # Process confirmation
                 deposit.process_confirmation()
                 
                 # Create notification
-                from notifications.models import Notification
-                Notification.objects.create(
-                    user=deposit.user,
-                    notification_type='DEPOSIT_CONFIRMED',
-                    title='Deposit Confirmed',
-                    message=f'Your deposit of ${deposit.usd_amount} has been confirmed.',
-                    metadata={'deposit_id': str(deposit.deposit_id)}
-                )
+                try:
+                    from notifications.models import Notification
+                    Notification.objects.create(
+                        user=deposit.user,
+                        notification_type='DEPOSIT_CONFIRMED',
+                        title='Deposit Confirmed',
+                        message=f'Your deposit of ${deposit.usd_amount} has been confirmed.',
+                        metadata={'deposit_id': str(deposit.deposit_id)}
+                    )
+                except ImportError:
+                    logger.warning("Notifications app not installed")
                 
                 logger.info(f"Deposit {payment_id} confirmed")
                 
             elif payment_status == 'failed':
                 deposit.status = Deposit.PaymentStatus.FAILED
-                deposit.payment_details.update({'webhook': request.data})
+                if 'payment_details' not in deposit.payment_details:
+                    deposit.payment_details = {}
+                deposit.payment_details['webhook'] = json.loads(json.dumps(request.data, default=str))
                 deposit.save()
                 
             elif payment_status == 'expired':
                 deposit.status = Deposit.PaymentStatus.EXPIRED
-                deposit.payment_details.update({'webhook': request.data})
+                if 'payment_details' not in deposit.payment_details:
+                    deposit.payment_details = {}
+                deposit.payment_details['webhook'] = json.loads(json.dumps(request.data, default=str))
                 deposit.save()
             
             return Response(
@@ -446,7 +479,7 @@ class NOWPaymentsWebhookView(APIView):
             )
             
         except Exception as e:
-            logger.error(f"Webhook processing failed: {str(e)}")
+            logger.error(f"Webhook processing failed: {str(e)}", exc_info=True)
             return Response(
                 {'error': 'Internal server error'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR

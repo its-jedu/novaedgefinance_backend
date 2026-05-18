@@ -203,7 +203,8 @@ SIMPLE_JWT = {
 # -------------------------
 
 CORS_ALLOWED_ORIGINS = [
-    "https://novaedge-h003.onrender.com",
+    "https://novaedgefinance.com",
+    "https://api.novaedgefinance.com",
     "http://localhost:5173",
     "http://localhost:3000",
 ]
@@ -222,19 +223,17 @@ CSRF_TRUSTED_ORIGINS = [
 # Email
 # -------------------------
 
-EMAIL_BACKEND = env(
-    'EMAIL_BACKEND',
-    default='django.core.mail.backends.console.EmailBackend'
-)
-EMAIL_HOST = env('EMAIL_HOST', default='')
-EMAIL_PORT = env.int('EMAIL_PORT', default=587)
-EMAIL_USE_TLS = env.bool('EMAIL_USE_TLS', default=True)
-EMAIL_HOST_USER = env('EMAIL_HOST_USER', default='')
+
+EMAIL_BACKEND = env('EMAIL_BACKEND', default='django.core.mail.backends.smtp.EmailBackend')
+EMAIL_HOST = env('EMAIL_HOST', default='s15097.usc1.stableserver.net')
+EMAIL_PORT = env.int('EMAIL_PORT', default=465)
+EMAIL_USE_TLS = False
+EMAIL_USE_SSL = True
+EMAIL_HOST_USER = env('EMAIL_HOST_USER', default='noreply@novaedgefinance.com')
 EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='')
-DEFAULT_FROM_EMAIL = env(
-    'DEFAULT_FROM_EMAIL',
-    default='noreply@novaedgefinance.com'
-)
+DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='NovaEdge Finance <noreply@novaedgefinance.com>')
+SERVER_EMAIL = env('SERVER_EMAIL', default='noreply@novaedgefinance.com')
+EMAIL_TIMEOUT = 30
 
 # -------------------------
 # Security (Production)
@@ -268,3 +267,17 @@ LOGGING = {
         "level": "INFO",
     },
 }
+
+# NOWPayments Configuration
+NOWPAYMENTS_API_KEY = env('NOWPAYMENTS_API_KEY', default='')
+NOWPAYMENTS_IPN_SECRET = env('NOWPAYMENTS_IPN_SECRET', default='')
+NOWPAYMENTS_BASE_URL = env('NOWPAYMENTS_BASE_URL', default='https://api.nowpayments.io/v1')
+
+# -------------------------
+# Frontend & Company Configuration
+# -------------------------
+
+FRONTEND_URL = env('FRONTEND_URL')
+COMPANY_NAME = env('COMPANY_NAME', default='NovaEdge Finance')
+COMPANY_TAGLINE = env('COMPANY_TAGLINE', default='Smart Crypto Investing Starts Here')
+

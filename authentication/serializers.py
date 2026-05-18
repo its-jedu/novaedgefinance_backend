@@ -25,7 +25,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             'id', 'email', 'first_name', 'last_name',
-            'country', 'password', 'password2', 'role',
+            'country', 'phone', 'password', 'password2', 'role',
             'email_verified'
         ]
         read_only_fields = ['id', 'role', 'email_verified']
@@ -58,17 +58,9 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         InvestmentProfile.objects.create(user=user)
         
         # Send email verification
-        # self.send_email_verification(user.email, email_token, user.get_full_name())
         send_verification_email(user.email, user.get_full_name(), email_token)
         
         return user
-    
-    def send_email_verification(self, email, token, name):
-        verification_link = f"http://localhost:5173/auth/verify-email?token={token}"
-        print(f"[EMAIL SIMULATION] Email verification link for {email}: {verification_link}")
-        print(f"Subject: Verify Your Email - NovaEdge Finance")
-        print(f"Hello {name},\n\nPlease verify your email by clicking: {verification_link}\n\nThis link will expire in 24 hours.")
-        # TODO: Integrate with email service
 
 class UserLoginSerializer(serializers.Serializer):
     email = serializers.EmailField(required=True)
@@ -88,10 +80,6 @@ class UserLoginSerializer(serializers.Serializer):
             if not user:
                 raise serializers.ValidationError("Invalid email or password.")
             
-            # Check email verification
-            if not user.email_verified:
-                raise serializers.ValidationError("Please verify your email before logging in.")
-            
             if not user.is_active:
                 raise serializers.ValidationError("Your account has been suspended. Please contact support.")
             
@@ -101,7 +89,7 @@ class UserLoginSerializer(serializers.Serializer):
                     f"Try again at {user.locked_until.strftime('%H:%M:%S')}"
                 )
             
-            user.reset_failed_attempts()
+            # Email verification check moved to view - don't block here
             attrs['user'] = user
         else:
             raise serializers.ValidationError("Must include 'email' and 'password'.")
@@ -138,14 +126,12 @@ class InvestmentProfileSerializer(serializers.ModelSerializer):
         }
     
     def validate(self, attrs):
-        # Make all fields optional - profile completion is not required for basic access
         return attrs
 
 class ProfileCompletionSerializer(serializers.Serializer):
     investment_profile = InvestmentProfileSerializer(required=True)
     
     def validate(self, attrs):
-        # Optional: Add any additional validation for profile completion
         return attrs
 
 class UserProfileSerializer(serializers.ModelSerializer):
@@ -153,16 +139,17 @@ class UserProfileSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
     can_make_deposits = serializers.SerializerMethodField()
     profile_status = serializers.SerializerMethodField()
+    phone = serializers.CharField(read_only=True)
     
     class Meta:
         model = User
         fields = [
             'id', 'email', 'first_name', 'last_name', 'full_name',
-            'country', 'role', 'email_verified', 'is_active', 
+            'country', 'phone', 'role', 'email_verified', 'is_active', 
             'created_at', 'investment_profile', 'can_make_deposits',
             'profile_status'
         ]
-        read_only_fields = ['id', 'created_at', 'email_verified']
+        read_only_fields = ['id', 'created_at', 'email_verified', 'phone']
     
     def get_full_name(self, obj):
         return obj.get_full_name()
@@ -171,10 +158,8 @@ class UserProfileSerializer(serializers.ModelSerializer):
         return obj.can_make_deposits
     
     def get_profile_status(self, obj):
-        """Return profile completion status"""
         try:
             profile = obj.investment_profile
-            # Check if profile has any data filled
             has_data = any([
                 profile.date_of_birth,
                 profile.address,
@@ -208,14 +193,12 @@ class ProfileStatusSerializer(serializers.Serializer):
         user = instance
         missing = []
         
-        # Check investment profile completion
         try:
             profile = user.investment_profile
             profile_exists = True
             profile_completed = profile.is_completed
             
             if not profile_completed:
-                # List which fields are missing (optional)
                 if not profile.date_of_birth:
                     missing.append('date_of_birth')
                 if not profile.address:
@@ -246,10 +229,9 @@ class ProfileStatusSerializer(serializers.Serializer):
 class ProfileUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['first_name', 'last_name', 'country']
+        fields = ['first_name', 'last_name', 'country', 'phone']
     
     def validate(self, attrs):
-        # Optional: Add any validation for profile updates
         return attrs
 
 class AdminUserUpdateSerializer(serializers.ModelSerializer):
@@ -257,7 +239,7 @@ class AdminUserUpdateSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             'id', 'email', 'first_name', 'last_name',
-            'country', 'role', 'email_verified', 'is_active', 
+            'country', 'phone', 'role', 'email_verified', 'is_active', 
             'is_staff', 'daily_investment_limit'
         ]
 
@@ -310,7 +292,6 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
         except User.DoesNotExist:
             raise serializers.ValidationError({"token": "Invalid reset token."})
         
-        # Check if token expired (24 hours)
         if user.email_verification_sent_at and \
            (timezone.now() - user.email_verification_sent_at).total_seconds() > 86400:
             raise serializers.ValidationError({"token": "Reset link has expired. Please request a new one."})
@@ -334,4 +315,3 @@ class ResendVerificationSerializer(serializers.Serializer):
             raise serializers.ValidationError("This account is suspended.")
         
         return value
-

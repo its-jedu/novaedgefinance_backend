@@ -75,6 +75,17 @@ class UserLoginView(APIView):
         if serializer.is_valid():
             user = serializer.validated_data['user']
             
+            # Check if email is verified BEFORE generating tokens
+            if not user.email_verified:
+                return Response({
+                    'error': 'EMAIL_NOT_VERIFIED',
+                    'message': 'Please verify your email before logging in.',
+                    'email': user.email,
+                }, status=status.HTTP_403_FORBIDDEN)
+            
+            # Reset failed attempts on successful authentication
+            user.reset_failed_attempts()
+            
             # Generate JWT tokens
             refresh = RefreshToken.for_user(user)
             
@@ -285,7 +296,6 @@ class ResendVerificationView(APIView):
             
             # Send verification email
             send_verification_email(user.email, user.get_full_name(), new_token)
-            # print(f"[EMAIL SIMULATION] New verification link for {user.email}: {verification_link}")
             
             return Response({
                 'message': 'Verification email sent successfully.'
@@ -464,4 +474,3 @@ class AdminUserInvestmentsView(APIView):
             return Response({
                 'error': 'User not found.'
             }, status=status.HTTP_404_NOT_FOUND)
-        
