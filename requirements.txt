@@ -30,3 +30,10 @@ gunicorn==21.2.0
 
 # Email API
 resend==0.6.0
+
+# QR Code (for referrals)
+qrcode==7.4.2
+Pillow==10.2.0
+
+# HTTP requests (for NOWPayments)
+requests==2.31.0
