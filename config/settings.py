@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 import environ
 from datetime import timedelta
+import pymysql
+pymysql.install_as_MySQLdb()
 
 # -------------------------
 # Base Configuration
@@ -96,16 +98,16 @@ TEMPLATES = [
 # Database (Render Postgresin)
 # -------------------------
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": env("DB_NAME"),
-        "USER": env("DB_USER"),
-        "PASSWORD": env("DB_PASSWORD"),
-        "HOST": env("DB_HOST"),
-        "PORT": env("DB_PORT", default="5432"),
-    }
-}
+# DATABASES = {
+#     "default": {
+#         "ENGINE": "django.db.backends.postgresql",
+#         "NAME": env("DB_NAME"),
+#         "USER": env("DB_USER"),
+#         "PASSWORD": env("DB_PASSWORD"),
+#         "HOST": env("DB_HOST"),
+#         "PORT": env("DB_PORT", default="5432"),
+#     }
+# }
 
 
 # Production
