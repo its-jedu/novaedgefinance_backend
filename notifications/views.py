@@ -16,7 +16,7 @@ from .serializers import (
     SendTestEmailSerializer
 )
 from .permissions import IsOwnerOrAdmin, AdminOnly
-from .utils import send_notification_email
+from .utils import send_notification_email, create_notification
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,6 @@ class MarkAsReadView(APIView):
         
         notification_ids = serializer.validated_data['notification_ids']
         
-        # Get user's notifications
         notifications = Notification.objects.filter(
             user=request.user,
             notification_id__in=notification_ids
@@ -118,7 +117,9 @@ class NotificationCountView(APIView):
         }, status=status.HTTP_200_OK)
 
 
-# Admin Views
+# ============================================
+# ADMIN VIEWS
+# ============================================
 
 class AdminNotificationListView(generics.ListAPIView):
     """
@@ -131,22 +132,18 @@ class AdminNotificationListView(generics.ListAPIView):
     def get_queryset(self):
         queryset = Notification.objects.all()
         
-        # Filter by user email
         user_email = self.request.query_params.get('user_email', None)
         if user_email:
             queryset = queryset.filter(user__email__icontains=user_email)
         
-        # Filter by notification type
         notification_type = self.request.query_params.get('type', None)
         if notification_type:
             queryset = queryset.filter(notification_type=notification_type)
         
-        # Filter by status
-        status = self.request.query_params.get('status', None)
-        if status:
-            queryset = queryset.filter(status=status)
+        status_filter = self.request.query_params.get('status', None)
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
         
-        # Filter by date range
         start_date = self.request.query_params.get('start_date', None)
         end_date = self.request.query_params.get('end_date', None)
         
@@ -156,6 +153,59 @@ class AdminNotificationListView(generics.ListAPIView):
             queryset = queryset.filter(created_at__date__lte=end_date)
         
         return queryset.order_by('-created_at')
+
+
+class AdminSendNotificationView(APIView):
+    """
+    Admin: Send notification to a user
+    """
+    permission_classes = [IsAuthenticated, AdminOnly]
+    
+    def post(self, request):
+        try:
+            from django.contrib.auth import get_user_model
+            User = get_user_model()
+            
+            user_id = request.data.get('user_id')
+            notification_type = request.data.get('notification_type', 'ADMIN_ACTION')
+            title = request.data.get('title')
+            message = request.data.get('message')
+            metadata = request.data.get('metadata', {})
+            
+            if not user_id or not title or not message:
+                return Response({
+                    'error': 'user_id, title, and message are required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            user = User.objects.get(id=user_id)
+            
+            notification = create_notification(
+                user=user,
+                notification_type=notification_type,
+                title=title,
+                message=message,
+                metadata=metadata
+            )
+            
+            if notification:
+                return Response({
+                    'message': 'Notification sent successfully',
+                    'notification': NotificationSerializer(notification).data
+                }, status=status.HTTP_201_CREATED)
+            else:
+                return Response({
+                    'error': 'Failed to create notification'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                
+        except User.DoesNotExist:
+            return Response({
+                'error': 'User not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Error sending notification: {str(e)}")
+            return Response({
+                'error': 'Failed to send notification'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class AdminResendNotificationView(APIView):
@@ -168,13 +218,11 @@ class AdminResendNotificationView(APIView):
         try:
             notification = get_object_or_404(Notification, notification_id=notification_id)
             
-            # Only resend failed notifications
             if notification.status != Notification.NotificationStatus.FAILED:
                 return Response({
                     'error': 'Can only resend failed notifications'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Try to send email again
             success = send_notification_email(notification)
             
             if success:
@@ -232,7 +280,6 @@ class AdminSendTestEmailView(APIView):
         try:
             template = NotificationTemplate.objects.get(id=template_id)
             
-            # Send test email
             from .utils import send_template_email
             success = send_template_email(
                 to_email=email,
@@ -258,3 +305,4 @@ class AdminSendTestEmailView(APIView):
             return Response({
                 'error': 'Failed to send test email'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        

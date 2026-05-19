@@ -8,6 +8,7 @@ from rest_framework.permissions import IsAuthenticated
 from django.db import transaction
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.conf import settings as django_settings
 from decimal import Decimal
 import logging
 
@@ -35,15 +36,12 @@ class MyReferralCodeView(generics.RetrieveAPIView):
     serializer_class = UserReferralCodeSerializer
     
     def get_object(self):
-        # Get or create referral code for user
         referral_code, created = UserReferralCode.objects.get_or_create(
             user=self.request.user
         )
-        
         if created:
             referral_code.generate_code()
             referral_code.save()
-        
         return referral_code
 
 
@@ -59,29 +57,19 @@ class CreateCustomCodeView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         
         custom_code = serializer.validated_data['custom_code']
-        
         try:
-            # Get user's referral code
             referral_code = UserReferralCode.objects.get(user=request.user)
-            
-            # Set custom code
             referral_code.custom_code = custom_code
             referral_code.save()
-            
             return Response({
                 'message': 'Custom referral code created successfully',
                 'referral_code': UserReferralCodeSerializer(referral_code).data
             }, status=status.HTTP_200_OK)
-            
         except UserReferralCode.DoesNotExist:
-            return Response({
-                'error': 'Referral code not found'
-            }, status=status.HTTP_404_NOT_FOUND)
+            return Response({'error': 'Referral code not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             logger.error(f"Error creating custom code: {str(e)}")
-            return Response({
-                'error': 'Failed to create custom code'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({'error': 'Failed to create custom code'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class MyReferralsView(generics.ListAPIView):
@@ -92,9 +80,7 @@ class MyReferralsView(generics.ListAPIView):
     serializer_class = ReferralSerializer
     
     def get_queryset(self):
-        return Referral.objects.filter(
-            referrer=self.request.user
-        ).order_by('-created_at')
+        return Referral.objects.filter(referrer=self.request.user).order_by('-created_at')
 
 
 class ReferralStatsView(APIView):
@@ -105,26 +91,13 @@ class ReferralStatsView(APIView):
     
     def get(self, request):
         try:
-            # Get referrals
             referrals = Referral.objects.filter(referrer=request.user)
-            
-            # Calculate stats
             total_referrals = referrals.count()
             active_referrals = referrals.filter(status='PENDING').count()
             earned_referrals = referrals.filter(status='EARNED').count()
+            total_bonus_earned = sum(ref.bonus_amount for ref in referrals.filter(bonus_paid=True))
+            pending_bonus = sum(ref.bonus_amount for ref in referrals.filter(status='EARNED', bonus_paid=False))
             
-            total_bonus_earned = sum(
-                ref.bonus_amount for ref in referrals.filter(bonus_paid=True)
-            )
-            
-            pending_bonus = sum(
-                ref.bonus_amount for ref in referrals.filter(
-                    status='EARNED', 
-                    bonus_paid=False
-                )
-            )
-            
-            # Get bonus wallet balance
             try:
                 bonus_wallet = BonusWallet.objects.get(user=request.user)
                 bonus_wallet_balance = bonus_wallet.balance
@@ -142,12 +115,9 @@ class ReferralStatsView(APIView):
             
             serializer = ReferralStatsSerializer(stats)
             return Response(serializer.data, status=status.HTTP_200_OK)
-            
         except Exception as e:
             logger.error(f"Error getting referral stats: {str(e)}")
-            return Response({
-                'error': 'Failed to get referral statistics'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({'error': 'Failed to get referral statistics'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class MyBonusWalletView(generics.RetrieveAPIView):
@@ -158,10 +128,7 @@ class MyBonusWalletView(generics.RetrieveAPIView):
     serializer_class = BonusWalletSerializer
     
     def get_object(self):
-        # Get or create bonus wallet
-        bonus_wallet, created = BonusWallet.objects.get_or_create(
-            user=self.request.user
-        )
+        bonus_wallet, created = BonusWallet.objects.get_or_create(user=self.request.user)
         return bonus_wallet
 
 
@@ -172,11 +139,7 @@ class WithdrawBonusView(APIView):
     permission_classes = [IsAuthenticated]
     
     def post(self, request):
-        serializer = WithdrawBonusSerializer(
-            data=request.data,
-            context={'request': request}
-        )
-        
+        serializer = WithdrawBonusSerializer(data=request.data, context={'request': request})
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         
@@ -186,28 +149,20 @@ class WithdrawBonusView(APIView):
         
         try:
             with transaction.atomic():
-                # Check if bonus withdrawal is enabled
-                settings = ReferralBonusSettings.get_settings()
-                if not settings.bonus_withdrawal_enabled:
-                    return Response({
-                        'error': 'Bonus withdrawal is currently disabled'
-                    }, status=status.HTTP_400_BAD_REQUEST)
+                settings_obj = ReferralBonusSettings.get_settings()
+                if not settings_obj.bonus_withdrawal_enabled:
+                    return Response({'error': 'Bonus withdrawal is currently disabled'}, status=status.HTTP_400_BAD_REQUEST)
                 
-                # Calculate fee
-                fee = amount * (settings.withdrawal_fee_percentage / Decimal('100'))
+                fee = amount * (settings_obj.withdrawal_fee_percentage / Decimal('100'))
                 net_amount = amount - fee
-                
-                # Debit from bonus wallet
                 bonus_wallet.debit(amount)
                 
                 if to_main_wallet:
-                    # Credit to main wallet
                     try:
                         from wallet.models import Wallet
                         main_wallet = Wallet.objects.get(user=request.user)
                         main_wallet.credit(net_amount, transaction_type='REFERRAL_BONUS')
                         
-                        # Record transaction
                         from wallet.models import Transaction
                         Transaction.objects.create(
                             wallet=main_wallet,
@@ -215,23 +170,15 @@ class WithdrawBonusView(APIView):
                             amount=net_amount,
                             status=Transaction.TransactionStatus.COMPLETED,
                             description=f"Referral bonus withdrawal (fee: ${fee})",
-                            metadata={
-                                'source': 'referral_bonus',
-                                'fee': str(fee),
-                                'gross_amount': str(amount)
-                            }
+                            metadata={'source': 'referral_bonus', 'fee': str(fee), 'gross_amount': str(amount)}
                         )
-                        
                         message = f"${net_amount} transferred to main wallet (fee: ${fee})"
-                        
                     except ImportError:
                         logger.warning("Wallet app not installed")
                         message = "Bonus debited but wallet app not available"
                 else:
-                    # TODO: Implement other withdrawal methods (crypto, bank, etc.)
                     message = f"${amount} withdrawn from bonus wallet (fee: ${fee})"
                 
-                # Create notification
                 try:
                     from notifications.utils import create_notification
                     create_notification(
@@ -239,11 +186,7 @@ class WithdrawBonusView(APIView):
                         notification_type='REFERRAL_BONUS',
                         title='Bonus Withdrawal',
                         message=f"You have withdrawn ${amount} from your bonus wallet. Net amount: ${net_amount}",
-                        metadata={
-                            'amount': str(amount),
-                            'fee': str(fee),
-                            'net_amount': str(net_amount)
-                        }
+                        metadata={'amount': str(amount), 'fee': str(fee), 'net_amount': str(net_amount)}
                     )
                 except ImportError:
                     logger.warning("Notifications app not installed")
@@ -255,12 +198,9 @@ class WithdrawBonusView(APIView):
                     'net_amount': net_amount,
                     'remaining_balance': bonus_wallet.balance
                 }, status=status.HTTP_200_OK)
-                
         except Exception as e:
             logger.error(f"Error withdrawing bonus: {str(e)}")
-            return Response({
-                'error': 'Failed to withdraw bonus'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({'error': 'Failed to withdraw bonus'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class ReferralLinkView(APIView):
@@ -271,15 +211,10 @@ class ReferralLinkView(APIView):
     
     def get(self, request):
         try:
-            # Get user's referral code
             referral_code = UserReferralCode.objects.get(user=request.user)
             display_code = referral_code.get_display_code()
-            
-            # Generate referral link
-            base_url = getattr(settings, 'FRONTEND_URL', 'https://novaedgefinance.com')
+            base_url = getattr(django_settings, 'FRONTEND_URL', 'https://novaedgefinance.com')
             referral_link = f"{base_url}/register?ref={display_code}"
-            
-            # Generate QR code URL
             qr_code_url = generate_referral_qr_code(referral_link)
             
             data = {
@@ -290,65 +225,50 @@ class ReferralLinkView(APIView):
             
             serializer = ReferralLinkSerializer(data)
             return Response(serializer.data, status=status.HTTP_200_OK)
-            
         except UserReferralCode.DoesNotExist:
-            return Response({
-                'error': 'Referral code not found'
-            }, status=status.HTTP_404_NOT_FOUND)
+            return Response({'error': 'Referral code not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             logger.error(f"Error generating referral link: {str(e)}")
-            return Response({
-                'error': 'Failed to generate referral link'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({'error': 'Failed to generate referral link'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-# Admin Views
+# ============================================
+# ADMIN VIEWS
+# ============================================
 
 class AdminReferralListView(generics.ListAPIView):
     """
-    Admin: List all referrals
+    Admin: List all referrals with filters
     """
     permission_classes = [IsAuthenticated, AdminOnly]
     serializer_class = ReferralSerializer
-    queryset = Referral.objects.all().order_by('-created_at')
     
     def get_queryset(self):
         queryset = Referral.objects.all()
-        
-        # Filter by referrer email
         referrer_email = self.request.query_params.get('referrer_email', None)
         if referrer_email:
             queryset = queryset.filter(referrer__email__icontains=referrer_email)
-        
-        # Filter by referred user email
         referred_email = self.request.query_params.get('referred_email', None)
         if referred_email:
             queryset = queryset.filter(referred_user__email__icontains=referred_email)
-        
-        # Filter by status
-        status = self.request.query_params.get('status', None)
-        if status:
-            queryset = queryset.filter(status=status)
-        
+        status_filter = self.request.query_params.get('status', None)
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
         return queryset.order_by('-created_at')
 
 
 class AdminBonusWalletListView(generics.ListAPIView):
     """
-    Admin: List all bonus wallets
+    Admin: List all bonus wallets with filters
     """
     permission_classes = [IsAuthenticated, AdminOnly]
     serializer_class = BonusWalletSerializer
-    queryset = BonusWallet.objects.all().order_by('-balance')
     
     def get_queryset(self):
         queryset = BonusWallet.objects.all()
-        
-        # Filter by user email
         user_email = self.request.query_params.get('user_email', None)
         if user_email:
             queryset = queryset.filter(user__email__icontains=user_email)
-        
         return queryset.order_by('-balance')
 
 
@@ -360,62 +280,92 @@ class AdminReferralStatsView(APIView):
     
     def get(self, request):
         try:
+            from django.db.models import Count, Sum, Q
+            from datetime import timedelta
+            
             # Overall statistics
             total_referrals = Referral.objects.count()
             pending_referrals = Referral.objects.filter(status='PENDING').count()
             earned_referrals = Referral.objects.filter(status='EARNED').count()
+            cancelled_referrals = Referral.objects.filter(status='CANCELLED').count()
             
+            # Bonus totals using Sum directly
             total_bonus_paid = Referral.objects.filter(bonus_paid=True).aggregate(
-                total=models.Sum('bonus_amount')
+                total=Sum('bonus_amount')
             )['total'] or Decimal('0.00')
             
             total_bonus_pending = Referral.objects.filter(
                 status='EARNED', 
                 bonus_paid=False
-            ).aggregate(total=models.Sum('bonus_amount'))['total'] or Decimal('0.00')
+            ).aggregate(total=Sum('bonus_amount'))['total'] or Decimal('0.00')
+            
+            # Active referrers
+            active_referrers = Referral.objects.values('referrer').distinct().count()
+            total_referrers = UserReferralCode.objects.count()
+            
+            # Conversion rate
+            conversion_rate = 0
+            if total_referrals > 0:
+                conversion_rate = round((earned_referrals / total_referrals) * 100, 1)
             
             # Top referrers
             top_referrers = []
-            from django.db.models import Count, Sum
-            referral_stats = UserReferralCode.objects.annotate(
-                referral_count=Count('user__referrals_made'),
-                total_bonus=Sum('user__referrals_made__bonus_amount')
-            ).order_by('-referral_count')[:10]
+            referrer_stats = Referral.objects.values(
+                'referrer__email', 
+                'referrer__first_name', 
+                'referrer__last_name'
+            ).annotate(
+                total_count=Count('id'),
+                successful_count=Count('id', filter=Q(status='EARNED')),
+                total_earned=Sum('bonus_amount', filter=Q(bonus_paid=True))
+            ).order_by('-successful_count')[:10]
             
-            for stat in referral_stats:
+            for stat in referrer_stats:
                 top_referrers.append({
-                    'user': stat.user.email,
-                    'referral_count': stat.referral_count,
-                    'total_bonus': stat.total_bonus or Decimal('0.00')
+                    'user_email': stat['referrer__email'],
+                    'user_name': f"{stat.get('referrer__first_name', '')} {stat.get('referrer__last_name', '')}".strip() or stat['referrer__email'],
+                    'total_referrals': stat['total_count'],
+                    'successful_referrals': stat['successful_count'],
+                    'total_earned': str(stat['total_earned'] or Decimal('0.00'))
                 })
             
-            # Monthly growth
+            # Monthly growth (last 6 months)
             monthly_growth = []
-            for i in range(6):  # Last 6 months
-                month = timezone.now() - timezone.timedelta(days=30*i)
-                month_start = month.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-                month_end = (month_start + timezone.timedelta(days=32)).replace(day=1) - timezone.timedelta(days=1)
+            for i in range(5, -1, -1):
+                month_date = timezone.now() - timedelta(days=30*i)
+                month_start = month_date.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                
+                if month_date.month == 12:
+                    month_end = month_date.replace(year=month_date.year + 1, month=1, day=1)
+                else:
+                    month_end = month_date.replace(month=month_date.month + 1, day=1)
                 
                 month_referrals = Referral.objects.filter(
-                    created_at__range=[month_start, month_end]
+                    created_at__gte=month_start,
+                    created_at__lt=month_end
                 )
                 
                 monthly_growth.append({
                     'month': month_start.strftime('%Y-%m'),
                     'new_referrals': month_referrals.count(),
-                    'new_bonus_paid': sum(
-                        ref.bonus_amount for ref in month_referrals.filter(bonus_paid=True)
+                    'successful_referrals': month_referrals.filter(status='EARNED').count(),
+                    'bonus_paid': str(
+                        month_referrals.filter(bonus_paid=True).aggregate(
+                            total=Sum('bonus_amount')
+                        )['total'] or Decimal('0.00')
                     )
                 })
             
             stats = {
-                'overall': {
-                    'total_referrals': total_referrals,
-                    'pending_referrals': pending_referrals,
-                    'earned_referrals': earned_referrals,
-                    'total_bonus_paid': total_bonus_paid,
-                    'total_bonus_pending': total_bonus_pending
-                },
+                'total_referrals': total_referrals,
+                'successful_referrals': earned_referrals,
+                'pending_referrals': pending_referrals,
+                'cancelled_referrals': cancelled_referrals,
+                'total_bonuses': str(total_bonus_paid),
+                'total_bonus_pending': str(total_bonus_pending),
+                'active_referrers': active_referrers,
+                'total_referrers': total_referrers,
+                'conversion_rate': conversion_rate,
                 'top_referrers': top_referrers,
                 'monthly_growth': monthly_growth
             }
@@ -424,8 +374,11 @@ class AdminReferralStatsView(APIView):
             
         except Exception as e:
             logger.error(f"Error getting admin referral stats: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return Response({
-                'error': 'Failed to get referral statistics'
+                'error': 'Failed to get referral statistics',
+                'detail': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
@@ -457,13 +410,9 @@ class AdminManualBonusView(APIView):
             user = User.objects.get(id=user_id)
             
             with transaction.atomic():
-                # Get or create bonus wallet
                 bonus_wallet, created = BonusWallet.objects.get_or_create(user=user)
-                
-                # Credit bonus
                 bonus_wallet.credit(amount)
                 
-                # Create notification
                 try:
                     from notifications.utils import create_notification
                     create_notification(
@@ -471,11 +420,7 @@ class AdminManualBonusView(APIView):
                         notification_type='REFERRAL_BONUS',
                         title='Manual Bonus Credit',
                         message=f'Admin has credited ${amount} to your bonus wallet. Reason: {reason}',
-                        metadata={
-                            'amount': str(amount),
-                            'reason': reason,
-                            'admin': request.user.email
-                        }
+                        metadata={'amount': str(amount), 'reason': reason, 'admin': request.user.email}
                     )
                 except ImportError:
                     logger.warning("Notifications app not installed")
@@ -484,15 +429,10 @@ class AdminManualBonusView(APIView):
                     'message': f'${amount} credited to {user.email}\'s bonus wallet',
                     'bonus_wallet': BonusWalletSerializer(bonus_wallet).data
                 }, status=status.HTTP_200_OK)
-                
         except User.DoesNotExist:
-            return Response({
-                'error': 'User not found'
-            }, status=status.HTTP_404_NOT_FOUND)
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             logger.error(f"Error crediting manual bonus: {str(e)}")
-            return Response({
-                'error': 'Failed to credit bonus'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({'error': 'Failed to credit bonus'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    
+

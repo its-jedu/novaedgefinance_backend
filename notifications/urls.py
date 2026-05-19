@@ -11,6 +11,7 @@ urlpatterns = [
     
     # Admin Notification Endpoints
     path('admin/list/', views.AdminNotificationListView.as_view(), name='admin-notifications'),
+    path('admin/send/', views.AdminSendNotificationView.as_view(), name='admin-send-notification'),
     path('admin/<uuid:notification_id>/resend/', views.AdminResendNotificationView.as_view(), name='resend-notification'),
     path('admin/templates/', views.AdminTemplateListView.as_view(), name='templates'),
     path('admin/templates/<int:id>/', views.AdminTemplateDetailView.as_view(), name='template-detail'),
