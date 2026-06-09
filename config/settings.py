@@ -98,32 +98,32 @@ TEMPLATES = [
 # Database (Render Postgresin)
 # -------------------------
 
-# DATABASES = {
-#     "default": {
-#         "ENGINE": "django.db.backends.postgresql",
-#         "NAME": env("DB_NAME"),
-#         "USER": env("DB_USER"),
-#         "PASSWORD": env("DB_PASSWORD"),
-#         "HOST": env("DB_HOST"),
-#         "PORT": env("DB_PORT", default="5432"),
-#     }
-# }
-
-
-# Production
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.mysql",
+        "ENGINE": "django.db.backends.postgresql",
         "NAME": env("DB_NAME"),
         "USER": env("DB_USER"),
         "PASSWORD": env("DB_PASSWORD"),
         "HOST": env("DB_HOST"),
-        "PORT": "3306",
-        "OPTIONS": {
-            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'"
-        }
+        "PORT": env("DB_PORT", default="5432"),
     }
 }
+
+
+# Production
+# DATABASES = {
+#     "default": {
+#         "ENGINE": "django.db.backends.mysql",
+#         "NAME": env("DB_NAME"),
+#         "USER": env("DB_USER"),
+#         "PASSWORD": env("DB_PASSWORD"),
+#         "HOST": env("DB_HOST"),
+#         "PORT": "3306",
+#         "OPTIONS": {
+#             'init_command': "SET sql_mode='STRICT_TRANS_TABLES'"
+#         }
+#     }
+# }
 
 
 # -------------------------
@@ -173,10 +173,23 @@ AUTH_USER_MODEL = 'authentication.User'
 # Cache (NO REDIS)
 # -------------------------
 
+# Cache configuration
 CACHES = {
-    "default": {
-        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'unique-snowflake',
+        'TIMEOUT': 300,  # 5 minutes default
+        'OPTIONS': {
+            'MAX_ENTRIES': 1000,
+        }
     }
+}
+
+# Cache timeouts
+CACHE_TTL = {
+    'dashboard': 30,  # 30 seconds for dashboard data
+    'user_list': 60,  # 1 minute for user list
+    'static_data': 300,  # 5 minutes for static data
 }
 
 # -------------------------
@@ -226,6 +239,7 @@ CORS_ALLOWED_ORIGINS = [
     "https://api.novaedgefinance.com",
     "http://localhost:5173",
     "http://localhost:3000",
+    "http://localhost:5175",
 ]
 
 CORS_ALLOW_CREDENTIALS = True
@@ -239,6 +253,7 @@ CSRF_TRUSTED_ORIGINS = [
     "https://api.novaedgefinance.com",
     "http://localhost:5173",
     "http://localhost:3000",
+    "http://localhost:5175",
 ]
 
 # -------------------------

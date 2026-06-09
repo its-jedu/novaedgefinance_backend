@@ -29,4 +29,6 @@ urlpatterns = [
     path('admin/users/<int:user_id>/reset-password/', views.AdminResetUserPasswordView.as_view(), name='admin-reset-password'),
     path('admin/users/<int:user_id>/change-role/', views.AdminChangeUserRoleView.as_view(), name='admin-change-role'),
     path('admin/users/<int:user_id>/investments/', views.AdminUserInvestmentsView.as_view(), name='admin-user-investments'),
+    # Admin Dashboard (aggregated endpoint)
+    path('admin/dashboard/', views.AdminDashboardView.as_view(), name='admin-dashboard'),
 ]
