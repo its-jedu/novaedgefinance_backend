@@ -1,6 +1,6 @@
 """
 Django settings for config project.
-cPanel Production Configuration.
+Production-ready configuration for Render deployment.
 """
 
 import os
@@ -95,26 +95,9 @@ TEMPLATES = [
 ]
 
 # -------------------------
-# Database (MySQL for cPanel)
+# Database (Render Postgresin)
 # -------------------------
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.mysql",
-        "NAME": env("DB_NAME"),
-        "USER": env("DB_USER"),
-        "PASSWORD": env("DB_PASSWORD"),
-        "HOST": env("DB_HOST", default="localhost"),
-        "PORT": env("DB_PORT", default="3306"),
-        "OPTIONS": {
-            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
-            'charset': 'utf8mb4',
-        }
-    }
-}
-
-
-# LOCAL
 # DATABASES = {
 #     "default": {
 #         "ENGINE": "django.db.backends.postgresql",
@@ -125,6 +108,23 @@ DATABASES = {
 #         "PORT": env("DB_PORT", default="5432"),
 #     }
 # }
+
+
+# Production
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.mysql",
+        "NAME": env("DB_NAME"),
+        "USER": env("DB_USER"),
+        "PASSWORD": env("DB_PASSWORD"),
+        "HOST": env("DB_HOST"),
+        "PORT": "3306",
+        "OPTIONS": {
+            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'"
+        }
+    }
+}
+
 
 # -------------------------
 # Password Validation
@@ -170,7 +170,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 AUTH_USER_MODEL = 'authentication.User'
 
 # -------------------------
-# Cache
+# Cache (NO REDIS)
 # -------------------------
 
 CACHES = {
@@ -238,9 +238,6 @@ CORS_ALLOWED_ORIGINS = [
     "https://api.novaedgefinance.com",
     "http://localhost:5173",
     "http://localhost:3000",
-    "http://localhost:5175",
-    "http://127.0.0.1:5173",
-    "http://127.0.0.1:5175",
 ]
 
 CORS_ALLOW_CREDENTIALS = True
@@ -276,17 +273,15 @@ CSRF_TRUSTED_ORIGINS = [
     "https://api.novaedgefinance.com",
     "http://localhost:5173",
     "http://localhost:3000",
-    "http://localhost:5175",
-    "http://127.0.0.1:5173",
-    "http://127.0.0.1:5175",
 ]
 
 # -------------------------
 # Email
 # -------------------------
 
+
 EMAIL_BACKEND = env('EMAIL_BACKEND', default='django.core.mail.backends.smtp.EmailBackend')
-EMAIL_HOST = env('EMAIL_HOST', default='novaedgefinance.com')
+EMAIL_HOST = env('EMAIL_HOST', default='s15097.usc1.stableserver.net')
 EMAIL_PORT = env.int('EMAIL_PORT', default=465)
 EMAIL_USE_TLS = False
 EMAIL_USE_SSL = True
@@ -318,7 +313,7 @@ else:
     SECURE_HSTS_SECONDS = 0
 
 # -------------------------
-# Logging
+# Logging (Render-friendly)
 # -------------------------
 
 LOGGING = {
@@ -369,10 +364,7 @@ LOGGING = {
     },
 }
 
-# -------------------------
 # NOWPayments Configuration
-# -------------------------
-
 NOWPAYMENTS_API_KEY = env('NOWPAYMENTS_API_KEY', default='')
 NOWPAYMENTS_IPN_SECRET = env('NOWPAYMENTS_IPN_SECRET', default='')
 NOWPAYMENTS_BASE_URL = env('NOWPAYMENTS_BASE_URL', default='https://api.nowpayments.io/v1')
