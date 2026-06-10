@@ -1,6 +1,6 @@
 """
 Django settings for config project.
-Production-ready configuration for Render deployment.
+cPanel Production Configuration.
 """
 
 import os
@@ -28,7 +28,7 @@ DEBUG = env.bool('DEBUG', default=False)
 
 ALLOWED_HOSTS = env.list(
     "ALLOWED_HOSTS",
-    default=["novaedge-h003.onrender.com"]
+    default=["localhost", "127.0.0.1", ".novaedgefinance.com"]
 )
 
 # -------------------------
@@ -95,36 +95,36 @@ TEMPLATES = [
 ]
 
 # -------------------------
-# Database (Render Postgresin)
+# Database (MySQL for cPanel)
 # -------------------------
 
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.postgresql",
+        "ENGINE": "django.db.backends.mysql",
         "NAME": env("DB_NAME"),
         "USER": env("DB_USER"),
         "PASSWORD": env("DB_PASSWORD"),
-        "HOST": env("DB_HOST"),
-        "PORT": env("DB_PORT", default="5432"),
+        "HOST": env("DB_HOST", default="localhost"),
+        "PORT": env("DB_PORT", default="3306"),
+        "OPTIONS": {
+            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+            'charset': 'utf8mb4',
+        }
     }
 }
 
 
-# Production
+# LOCAL
 # DATABASES = {
 #     "default": {
-#         "ENGINE": "django.db.backends.mysql",
+#         "ENGINE": "django.db.backends.postgresql",
 #         "NAME": env("DB_NAME"),
 #         "USER": env("DB_USER"),
 #         "PASSWORD": env("DB_PASSWORD"),
 #         "HOST": env("DB_HOST"),
-#         "PORT": "3306",
-#         "OPTIONS": {
-#             'init_command': "SET sql_mode='STRICT_TRANS_TABLES'"
-#         }
+#         "PORT": env("DB_PORT", default="5432"),
 #     }
 # }
-
 
 # -------------------------
 # Password Validation
@@ -170,26 +170,24 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 AUTH_USER_MODEL = 'authentication.User'
 
 # -------------------------
-# Cache (NO REDIS)
+# Cache
 # -------------------------
 
-# Cache configuration
 CACHES = {
     'default': {
         'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
         'LOCATION': 'unique-snowflake',
-        'TIMEOUT': 300,  # 5 minutes default
+        'TIMEOUT': 300,
         'OPTIONS': {
             'MAX_ENTRIES': 1000,
         }
     }
 }
 
-# Cache timeouts
 CACHE_TTL = {
-    'dashboard': 30,  # 30 seconds for dashboard data
-    'user_list': 60,  # 1 minute for user list
-    'static_data': 300,  # 5 minutes for static data
+    'dashboard': 30,
+    'user_list': 60,
+    'static_data': 300,
 }
 
 # -------------------------
@@ -236,13 +234,37 @@ SIMPLE_JWT = {
 
 CORS_ALLOWED_ORIGINS = [
     "https://novaedgefinance.com",
+    "https://www.novaedgefinance.com",
     "https://api.novaedgefinance.com",
     "http://localhost:5173",
     "http://localhost:3000",
     "http://localhost:5175",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:5175",
 ]
 
 CORS_ALLOW_CREDENTIALS = True
+
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
+]
+
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
 
 # -------------------------
 # CSRF
@@ -250,19 +272,21 @@ CORS_ALLOW_CREDENTIALS = True
 
 CSRF_TRUSTED_ORIGINS = [
     "https://novaedgefinance.com",
+    "https://www.novaedgefinance.com",
     "https://api.novaedgefinance.com",
     "http://localhost:5173",
     "http://localhost:3000",
     "http://localhost:5175",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:5175",
 ]
 
 # -------------------------
 # Email
 # -------------------------
 
-
 EMAIL_BACKEND = env('EMAIL_BACKEND', default='django.core.mail.backends.smtp.EmailBackend')
-EMAIL_HOST = env('EMAIL_HOST', default='s15097.usc1.stableserver.net')
+EMAIL_HOST = env('EMAIL_HOST', default='novaedgefinance.com')
 EMAIL_PORT = env.int('EMAIL_PORT', default=465)
 EMAIL_USE_TLS = False
 EMAIL_USE_SSL = True
@@ -286,26 +310,69 @@ if not DEBUG:
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+else:
+    # Development/Staging - relaxed security
+    SECURE_SSL_REDIRECT = False
+    SESSION_COOKIE_SECURE = False
+    CSRF_COOKIE_SECURE = False
+    SECURE_HSTS_SECONDS = 0
 
 # -------------------------
-# Logging (Render-friendly)
+# Logging
 # -------------------------
 
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": "[{levelname}] {asctime} {module} {message}",
+            "style": "{",
+        },
+    },
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
+            "formatter": "verbose",
+        },
+        "file": {
+            "class": "logging.FileHandler",
+            "filename": BASE_DIR / "logs" / "django.log",
+            "formatter": "verbose",
         },
     },
     "root": {
-        "handlers": ["console"],
+        "handlers": ["console", "file"],
         "level": "INFO",
+    },
+    "loggers": {
+        "django": {
+            "handlers": ["console", "file"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "authentication": {
+            "handlers": ["console", "file"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "wallet": {
+            "handlers": ["console", "file"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "investments": {
+            "handlers": ["console", "file"],
+            "level": "INFO",
+            "propagate": False,
+        },
     },
 }
 
+# -------------------------
 # NOWPayments Configuration
+# -------------------------
+
 NOWPAYMENTS_API_KEY = env('NOWPAYMENTS_API_KEY', default='')
 NOWPAYMENTS_IPN_SECRET = env('NOWPAYMENTS_IPN_SECRET', default='')
 NOWPAYMENTS_BASE_URL = env('NOWPAYMENTS_BASE_URL', default='https://api.nowpayments.io/v1')
@@ -314,7 +381,14 @@ NOWPAYMENTS_BASE_URL = env('NOWPAYMENTS_BASE_URL', default='https://api.nowpayme
 # Frontend & Company Configuration
 # -------------------------
 
-FRONTEND_URL = env('FRONTEND_URL')
+FRONTEND_URL = env('FRONTEND_URL', default='https://novaedgefinance.com')
+SITE_URL = env('SITE_URL', default='https://api.novaedgefinance.com')
 COMPANY_NAME = env('COMPANY_NAME', default='NovaEdge Finance')
 COMPANY_TAGLINE = env('COMPANY_TAGLINE', default='Smart Crypto Investing Starts Here')
 
+# -------------------------
+# Data Upload Limits
+# -------------------------
+
+DATA_UPLOAD_MAX_MEMORY_SIZE = 10485760  # 10MB
+FILE_UPLOAD_MAX_MEMORY_SIZE = 10485760  # 10MB
